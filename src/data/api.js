@@ -1,10 +1,10 @@
 // API functions for discount campaigns
 
-const API_BASE_URL = 'http://localhost:4000';
+const API_BASE_URL = 'https://discount-backend-one.vercel.app/api';
 
 export const getCampaigns = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/campaigns`);
+    const response = await fetch(`${API_BASE_URL}`);
     if (!response.ok) {
       throw new Error('Failed to fetch campaigns');
     }
@@ -17,7 +17,7 @@ export const getCampaigns = async () => {
 
 export const getCampaignById = async (id) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/campaigns/${id}`);
+    const response = await fetch(`${API_BASE_URL}/${id}`);
     if (!response.ok) {
       throw new Error(`Failed to fetch campaign with id ${id}`);
     }
@@ -30,7 +30,7 @@ export const getCampaignById = async (id) => {
 
 export const createCampaign = async (data) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/campaigns`, {
+    const response = await fetch(`${API_BASE_URL}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -49,7 +49,7 @@ export const createCampaign = async (data) => {
 
 export const updateCampaign = async (id, data) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/campaigns/${id}`, {
+    const response = await fetch(`${API_BASE_URL}?id=${id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -68,7 +68,7 @@ export const updateCampaign = async (id, data) => {
 
 export const deleteCampaign = async (id) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/campaigns/${id}`, {
+    const response = await fetch(`${API_BASE_URL}?id=${id}`, {
       method: 'DELETE',
     });
     if (!response.ok) {
