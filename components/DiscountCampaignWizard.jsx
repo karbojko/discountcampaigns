@@ -104,12 +104,14 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
     // Validate required fields
     if (!internalName.trim() || !publicName.trim() || !startDate) {
       setActiveTab(0); // Switch to Basic Info tab
+      alert('Please fill in all required fields: Internal name, Public name, and Start date');
       return;
     }
     
     // Validate end date is not before start date
     if (endDate && new Date(endDate) < new Date(startDate)) {
       setActiveTab(0);
+      alert('End date must not be earlier than start date');
       return;
     }
     
@@ -163,12 +165,20 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         }))
       };
       
-      await addCampaign(campaignData);
+      console.log('Attempting to save campaign to MockAPI:', campaignData);
+      
+      // Call addCampaign and wait for the response
+      const savedCampaign = await addCampaign(campaignData);
+      
+      console.log('Campaign saved successfully to MockAPI:', savedCampaign);
+      
+      // Only call onComplete and navigate after successful save
       onComplete();
       navigate('/settings/discount-campaigns');
     } catch (error) {
-      console.error('Failed to save campaign:', error);
-      alert('Failed to save campaign. Please try again.');
+      console.error('Failed to save campaign to MockAPI:', error);
+      alert(`Failed to save campaign. Error: ${error.message || 'Unknown error'}. Please try again.`);
+      // Don't call onComplete() or navigate on error
     } finally {
       setSaving(false);
     }
@@ -2004,9 +2014,10 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         <Button
           variant="contained"
           onClick={handleSave}
+          disabled={saving}
           sx={{ textTransform: 'none' }}
         >
-          Save campaign
+          {saving ? 'Saving...' : 'Save campaign'}
         </Button>
       </DialogActions>
     </Dialog>
