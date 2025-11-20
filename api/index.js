@@ -63,7 +63,17 @@ export default async function handler(req, res) {
     // DELETE — usuwa kampanię
     if (method === "DELETE") {
       const id = req.query.id;
-      await del(`campaigns/${id}.json`);
+      const blobName = `campaigns/${id}.json`;
+
+      // Pobierz listę blobów aby znaleźć URL
+      const blobs = await list({ prefix: blobName });
+      
+      if (blobs.blobs.length === 0) {
+        return res.status(404).json({ message: "Not found" });
+      }
+
+      // Usuń blob używając jego URL
+      await del(blobs.blobs[0].url);
 
       return res.status(200).json({ message: "Deleted" });
     }
