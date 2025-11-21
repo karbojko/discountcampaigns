@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDiscountCampaigns } from '../src/context/DiscountCampaignContext';
 import {
@@ -28,6 +28,9 @@ import {
   FormHelperText,
   OutlinedInput,
   Chip,
+  Autocomplete,
+  Tooltip,
+  Grid,
 } from '@mui/material';
 import AddRounded from '@mui/icons-material/AddRounded';
 import DeleteRounded from '@mui/icons-material/DeleteRounded';
@@ -78,6 +81,12 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
 
   // Module Discounts
   const [moduleDiscounts, setModuleDiscounts] = useState([]);
+
+  // Refs for value inputs - must be at top level to avoid hook order issues
+  const membershipValueInputRefs = useRef({});
+  const membershipStarterPackageValueInputRefs = useRef({});
+  const flatFeeValueInputRefs = useRef({});
+  const moduleValueInputRefs = useRef({});
 
   // Mock data for dropdowns
   const membershipOffers = ['All', 'Premium', 'Standard', 'Basic'];
@@ -132,24 +141,37 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         description: publicDescription || '',
         membershipDiscounts: membershipDiscounts.map(d => ({
           id: `m${d.id}`,
-          membershipOffer: d.membershipOfferId || 'All',
-          terms: d.termMode === 'all_terms' ? 'All' : d.selectedTerms.join(', '),
-          paymentFrequency: d.frequencyMode === 'all_frequencies' ? 'All' : d.selectedFrequencies.join(', '),
+          membershipOffer: d.membershipOfferId,
+          terms: d.selectedTerm,
+          paymentFrequency: d.selectedFrequency,
           discountType: d.discountType.replace('_', ' '),
           value: d.discountType === 'percentage' ? Number(d.value) : d.value,
-          ...(d.starterPackageEnabled && d.starterPackageValue && {
-            starterPackageDiscount: Number(d.starterPackageValue)
-          }),
           ...(d.facilityPrices.length > 0 && {
             facilityPrices: d.facilityPrices.map(fp => ({
               facility: fp.facility,
               price: `${fp.value} €`
             }))
+          }),
+          ...(d.starterPackageEnabled && {
+            starterPackage: {
+              enabled: true,
+              type: d.starterPackageType?.replace('_', ' '),
+              value: d.starterPackageValue ? Number(d.starterPackageValue) : null,
+              ...(d.starterPackageFacilities.length > 0 && {
+                facilityPrices: d.starterPackageFacilities.map(fp => ({
+                  facility: fp.facility,
+                  price: `${fp.value} €`
+                }))
+              })
+            }
           })
         })),
         flatFeeDiscounts: flatFeeDiscounts.map(d => ({
           id: `f${d.id}`,
-          flatFeeType: d.flatFeeType.replace('_', ' '),
+          membershipOffer: d.membershipOfferId,
+          terms: d.selectedTerm,
+          paymentFrequency: d.selectedFrequency,
+          flatFeeType: d.selectedFlatFee,
           duration: d.durationType === 'permanent' ? 'Permanent' : d.durationType,
           discountType: d.discountType.replace('_', ' '),
           value: d.discountType === 'percentage' ? Number(d.value) : d.value,
@@ -162,7 +184,10 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         })),
         moduleDiscounts: moduleDiscounts.map(d => ({
           id: `mod${d.id}`,
-          moduleName: d.moduleType.replace('_', ' '),
+          membershipOffer: d.membershipOfferId,
+          terms: d.selectedTerm,
+          paymentFrequency: d.selectedFrequency,
+          moduleName: d.selectedModule,
           duration: d.durationType === 'permanent' ? 'Permanent' : d.durationType,
           discountType: d.discountType.replace('_', ' '),
           value: d.discountType === 'percentage' ? Number(d.value) : d.value,
@@ -202,12 +227,9 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
       ...membershipDiscounts,
       {
         id: Date.now(),
-        membershipOfferMode: 'all',
-        membershipOfferId: null,
-        termMode: 'all_terms',
-        selectedTerms: [],
-        frequencyMode: 'all_frequencies',
-        selectedFrequencies: [],
+        membershipOfferId: 'All',
+        selectedTerm: 'All',
+        selectedFrequency: 'All',
         durationType: 'permanent',
         durationMonths: '',
         durationMinimum: '',
@@ -215,15 +237,16 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         value: '',
         facilityPrices: [],
         starterPackageEnabled: false,
-        starterPackageType: 'percentage',
-        starterPackageValue: '',
+        starterPackageType: null,
+        starterPackageValue: null,
+        starterPackageFacilities: [],
       },
     ]);
   };
 
   const updateMembershipDiscount = (id, field, value) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
+    setMembershipDiscounts(prevDiscounts =>
+      prevDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
     );
   };
 
@@ -275,17 +298,59 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
     setMembershipDiscounts(membershipDiscounts.filter((d) => d.id !== id));
   };
 
+  const addStarterPackageFacilityPrice = (discountId) => {
+    setMembershipDiscounts(
+      membershipDiscounts.map((d) =>
+        d.id === discountId
+          ? {
+              ...d,
+              starterPackageFacilities: [
+                ...d.starterPackageFacilities,
+                { id: Date.now(), facility: '', value: '' },
+              ],
+            }
+          : d
+      )
+    );
+  };
+
+  const updateStarterPackageFacilityPrice = (discountId, facilityId, field, value) => {
+    setMembershipDiscounts(
+      membershipDiscounts.map((d) =>
+        d.id === discountId
+          ? {
+              ...d,
+              starterPackageFacilities: d.starterPackageFacilities.map((f) =>
+                f.id === facilityId ? { ...f, [field]: value } : f
+              ),
+            }
+          : d
+      )
+    );
+  };
+
+  const deleteStarterPackageFacilityPrice = (discountId, facilityId) => {
+    setMembershipDiscounts(
+      membershipDiscounts.map((d) =>
+        d.id === discountId
+          ? {
+              ...d,
+              starterPackageFacilities: d.starterPackageFacilities.filter((f) => f.id !== facilityId),
+            }
+          : d
+      )
+    );
+  };
+
   const addFlatFeeDiscount = () => {
     setFlatFeeDiscounts([
       ...flatFeeDiscounts,
       {
         id: Date.now(),
-        membershipOfferMode: 'all',
-        membershipOfferId: null,
-        termMode: 'all_terms',
-        selectedTerms: [],
-        frequencyMode: 'all_frequencies',
-        selectedFrequencies: [],
+        membershipOfferId: 'All',
+        selectedTerm: 'All',
+        selectedFrequency: 'All',
+        selectedFlatFee: 'All',
         flatFeeType: 'one_time',
         durationType: 'permanent',
         durationMonths: '',
@@ -298,8 +363,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const updateFlatFeeDiscount = (id, field, value) => {
-    setFlatFeeDiscounts(
-      flatFeeDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
+    setFlatFeeDiscounts(prevDiscounts =>
+      prevDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
     );
   };
 
@@ -356,12 +421,10 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
       ...moduleDiscounts,
       {
         id: Date.now(),
-        membershipOfferMode: 'all',
-        membershipOfferId: null,
-        termMode: 'all_terms',
-        selectedTerms: [],
-        frequencyMode: 'all_frequencies',
-        selectedFrequencies: [],
+        membershipOfferId: 'All',
+        selectedTerm: 'All',
+        selectedFrequency: 'All',
+        selectedModule: 'All',
         moduleType: 'one_time',
         durationType: 'permanent',
         durationMonths: '',
@@ -374,8 +437,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const updateModuleDiscount = (id, field, value) => {
-    setModuleDiscounts(
-      moduleDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
+    setModuleDiscounts(prevDiscounts =>
+      prevDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
     );
   };
 
@@ -434,6 +497,206 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
       setEndDate('');
     }
   }, [isAlwaysActive]);
+
+  // Helper function to get dynamic value input configuration based on discount type
+  const getValueInputConfig = (discountType) => {
+    switch (discountType) {
+      case 'percentage':
+        return {
+          label: 'Discount percentage',
+          placeholder: 'Enter percentage',
+          suffix: '%',
+          min: 1,
+          max: 100,
+          step: 1,
+          helperText: 'Value must be between 1 and 100',
+        };
+      case 'absolute_price':
+        return {
+          label: 'Discount amount',
+          placeholder: 'Enter amount',
+          suffix: '€',
+          min: 0.01,
+          max: undefined,
+          step: 0.01,
+          helperText: 'Value must be greater than 0',
+        };
+      case 'substitute_price':
+        return {
+          label: 'New price',
+          placeholder: 'Enter new price',
+          suffix: '€',
+          min: 0.01,
+          max: undefined,
+          step: 0.01,
+          helperText: 'Value must be greater than 0',
+        };
+      default:
+        return {
+          label: 'Value',
+          placeholder: 'Enter value',
+          suffix: '',
+          min: 0,
+          max: undefined,
+          step: 0.01,
+          helperText: '',
+        };
+    }
+  };
+
+  // Reusable Type + Value component
+  const renderTypeAndValue = (discount, updateFunction, valueInputRef) => {
+    const valueConfig = getValueInputConfig(discount.discountType);
+    const isValueEnabled = Boolean(discount.discountType);
+    
+    // Validate value based on type
+    const validateValue = (value) => {
+      if (!value || value === '') return '';
+      const numValue = parseFloat(value);
+      
+      if (discount.discountType === 'percentage') {
+        if (numValue < 1 || numValue > 100) {
+          return 'Value must be between 1 and 100';
+        }
+      } else if (discount.discountType === 'absolute_price' || discount.discountType === 'substitute_price') {
+        if (numValue <= 0) {
+          return 'Value must be greater than 0';
+        }
+      }
+      return '';
+    };
+    
+    const errorMessage = validateValue(discount.value);
+
+    return (
+      <Paper
+        sx={{
+          p: 3,
+          mb: 3,
+          border: '1px solid',
+          borderColor: 'neutral.200',
+          borderRadius: 2,
+          backgroundColor: 'background.paper',
+        }}
+      >
+        <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
+          Type + Value
+        </Typography>
+        
+        <Grid container spacing={3}>
+          {/* Type Column */}
+          <Grid item xs={6}>
+            <FormControl component="fieldset" sx={{ width: '100%' }}>
+              <FormLabel 
+                component="legend" 
+                sx={{ 
+                  mb: 1.5, 
+                  fontSize: 14, 
+                  fontWeight: 500, 
+                  color: 'text.primary' 
+                }}
+              >
+                Discount type
+              </FormLabel>
+              <RadioGroup
+                value={discount.discountType}
+                onChange={(e) => {
+                  const newType = e.target.value;
+                  updateFunction(discount.id, 'discountType', newType);
+                  // Clear value when changing type
+                  updateFunction(discount.id, 'value', '');
+                  // Auto-focus value input after type selection
+                  setTimeout(() => {
+                    if (valueInputRef && valueInputRef.current) {
+                      valueInputRef.current.focus();
+                    }
+                  }, 100);
+                }}
+              >
+                <FormControlLabel
+                  value="substitute_price"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Substitute price</Typography>}
+                />
+                <FormControlLabel
+                  value="percentage"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Percentage</Typography>}
+                />
+                <FormControlLabel
+                  value="absolute_price"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Absolute price</Typography>}
+                />
+              </RadioGroup>
+            </FormControl>
+          </Grid>
+
+          {/* Value Column */}
+          <Grid item xs={6}>
+            <FormControl fullWidth>
+              <FormLabel 
+                component="legend" 
+                sx={{ 
+                  mb: 1.5, 
+                  fontSize: 14, 
+                  fontWeight: 500, 
+                  color: isValueEnabled ? 'text.primary' : 'text.disabled'
+                }}
+              >
+                {valueConfig.label}
+              </FormLabel>
+              <TextField
+                inputRef={valueInputRef}
+                placeholder={valueConfig.placeholder}
+                type="number"
+                value={discount.value}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  updateFunction(discount.id, 'value', value);
+                }}
+                size="small"
+                disabled={!isValueEnabled}
+                error={Boolean(errorMessage && discount.value)}
+                helperText={
+                  errorMessage && discount.value
+                    ? errorMessage
+                    : isValueEnabled
+                    ? valueConfig.helperText
+                    : 'Select a discount type first'
+                }
+                InputLabelProps={{ shrink: true }}
+                InputProps={{
+                  endAdornment: valueConfig.suffix && isValueEnabled ? (
+                    <Typography
+                      variant="body2"
+                      sx={{ 
+                        color: 'text.secondary',
+                        ml: 1,
+                        userSelect: 'none'
+                      }}
+                    >
+                      {valueConfig.suffix}
+                    </Typography>
+                  ) : null,
+                }}
+                inputProps={{
+                  min: valueConfig.min,
+                  max: valueConfig.max,
+                  step: valueConfig.step,
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    backgroundColor: isValueEnabled ? 'background.paper' : 'action.disabledBackground',
+                  },
+                }}
+              />
+            </FormControl>
+          </Grid>
+        </Grid>
+      </Paper>
+    );
+  };
 
   const renderBasicInfo = () => (
     <Box>
@@ -658,31 +921,38 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
     </Box>
   );
 
-  const renderMembershipFeeDiscounts = () => (
-    <Box>
-      {membershipDiscounts.length === 0 && (
-        <Box
-          sx={{
-            py: 6,
-            textAlign: 'center',
-            border: '1px dashed',
-            borderColor: 'neutral.200',
-            borderRadius: 2,
-            color: 'text.secondary',
-            mb: 3,
-          }}
-        >
-          <Typography variant="body2">
-            No membership fee discounts configured yet. Click "Add a membership fee discount" to create one.
-          </Typography>
-        </Box>
-      )}
+  const renderMembershipFeeDiscounts = () => {
+    return (
+      <Box>
+        {membershipDiscounts.length === 0 && (
+          <Box
+            sx={{
+              py: 6,
+              textAlign: 'center',
+              border: '1px dashed',
+              borderColor: 'neutral.200',
+              borderRadius: 2,
+              color: 'text.secondary',
+              mb: 3,
+            }}
+          >
+            <Typography variant="body2">
+              No membership fee discounts configured yet. Click "Add a membership fee discount" to create one.
+            </Typography>
+          </Box>
+        )}
 
-      {membershipDiscounts.map((discount, index) => (
-        <Paper
-          key={discount.id}
-          sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
-        >
+        {membershipDiscounts.map((discount, index) => {
+          // Initialize ref for this discount if it doesn't exist
+          if (!membershipValueInputRefs.current[discount.id]) {
+            membershipValueInputRefs.current[discount.id] = React.createRef();
+          }
+          
+          return (
+            <Paper
+              key={discount.id}
+              sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
+            >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
               Membership Fee Discount {index + 1}
@@ -696,177 +966,86 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             </IconButton>
           </Box>
 
-          {/* Select membership offer */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Select membership offer
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.membershipOfferMode}
-              onChange={(e) => {
-                const newMode = e.target.value;
-                updateMembershipDiscount(discount.id, 'membershipOfferMode', newMode);
-                if (newMode === 'all') {
-                  updateMembershipDiscount(discount.id, 'membershipOfferId', null);
-                }
-              }}
-            >
-              <FormControlLabel
-                value="single"
-                control={<Radio />}
-                label={<Typography variant="body2">Membership offer</Typography>}
+          {/* Membership offer, Term, Payment frequency in one row */}
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={4}>
+              <Autocomplete
+                size="small"
+                options={membershipOffers}
+                value={discount.membershipOfferId}
+                onChange={(event, newValue) => {
+                  const selectedOffer = newValue || 'All';
+                  updateMembershipDiscount(discount.id, 'membershipOfferId', selectedOffer);
+                  
+                  // Auto-disable logic
+                  if (selectedOffer === 'All') {
+                    updateMembershipDiscount(discount.id, 'selectedTerm', 'All');
+                    updateMembershipDiscount(discount.id, 'selectedFrequency', 'All');
+                  } else {
+                    // Reset dependent fields when switching from "All" to specific offer
+                    updateMembershipDiscount(discount.id, 'selectedTerm', '');
+                    updateMembershipDiscount(discount.id, 'selectedFrequency', '');
+                  }
+                }}
+                renderInput={(params) => <TextField {...params} label="Membership offer" />}
+                fullWidth
               />
-              {discount.membershipOfferMode === 'single' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Select offer</InputLabel>
-                    <Select
-                      value={discount.membershipOfferId || ''}
-                      onChange={(e) =>
-                        updateMembershipDiscount(discount.id, 'membershipOfferId', e.target.value)
+            </Grid>
+            
+            <Grid item xs={4}>
+              <Tooltip
+                title={discount.membershipOfferId === 'All' ? "This field is automatically set to All when selecting 'All membership offers'." : ""}
+                arrow
+                placement="top"
+              >
+                <Box>
+                  <Autocomplete
+                    size="small"
+                    options={terms}
+                    value={discount.selectedTerm}
+                    onChange={(event, newValue) => {
+                      updateMembershipDiscount(discount.id, 'selectedTerm', newValue || '');
+                    }}
+                    renderInput={(params) => <TextField {...params} label="Term" />}
+                    fullWidth
+                    disabled={discount.membershipOfferId === 'All'}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        opacity: discount.membershipOfferId === 'All' ? 0.6 : 1,
                       }
-                      label="Select offer"
-                    >
-                      {membershipOffers.map((offer) => (
-                        <MenuItem key={offer} value={offer}>
-                          <Typography variant="body2">{offer}</Typography>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    }}
+                  />
                 </Box>
-              )}
-              <FormControlLabel
-                value="all"
-                control={<Radio />}
-                label={<Typography variant="body2">All offers</Typography>}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              If 'All offers' is selected, then all payment frequencies and terms are selected automatically.
-            </FormHelperText>
-          </FormControl>
-
-          {/* Term */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Term
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.termMode}
-              onChange={(e) => updateMembershipDiscount(discount.id, 'termMode', e.target.value)}
-            >
-              <FormControlLabel
-                value="if_term"
-                control={<Radio />}
-                label={<Typography variant="body2">If term</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-              {discount.termMode === 'if_term' && discount.membershipOfferMode !== 'all' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Select terms</InputLabel>
-                    <Select
-                      multiple
-                      value={discount.selectedTerms}
-                      onChange={(e) =>
-                        updateMembershipDiscount(discount.id, 'selectedTerms', e.target.value)
+              </Tooltip>
+            </Grid>
+            
+            <Grid item xs={4}>
+              <Tooltip
+                title={discount.membershipOfferId === 'All' ? "This field is automatically set to All when selecting 'All membership offers'." : ""}
+                arrow
+                placement="top"
+              >
+                <Box>
+                  <Autocomplete
+                    size="small"
+                    options={paymentFrequencies}
+                    value={discount.selectedFrequency}
+                    onChange={(event, newValue) => {
+                      updateMembershipDiscount(discount.id, 'selectedFrequency', newValue || '');
+                    }}
+                    renderInput={(params) => <TextField {...params} label="Payment frequency" />}
+                    fullWidth
+                    disabled={discount.membershipOfferId === 'All'}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        opacity: discount.membershipOfferId === 'All' ? 0.6 : 1,
                       }
-                      input={<OutlinedInput label="Select terms" />}
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {selected.map((value) => (
-                            <Chip key={value} label={value} size="small" />
-                          ))}
-                        </Box>
-                      )}
-                    >
-                      {terms.map((term) => (
-                        <MenuItem key={term} value={term}>
-                          <Checkbox checked={discount.selectedTerms.indexOf(term) > -1} />
-                          <Typography variant="body2">{term}</Typography>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    }}
+                  />
                 </Box>
-              )}
-              <FormControlLabel
-                value="all_terms"
-                control={<Radio />}
-                label={<Typography variant="body2">All terms</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              Related only to selected membership offer
-            </FormHelperText>
-          </FormControl>
-
-          {/* Payment frequency */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Payment frequency
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.frequencyMode}
-              onChange={(e) =>
-                updateMembershipDiscount(discount.id, 'frequencyMode', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="payment_frequency"
-                control={<Radio />}
-                label={<Typography variant="body2">Payment frequency</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-              {discount.frequencyMode === 'payment_frequency' &&
-                discount.membershipOfferMode !== 'all' && (
-                  <Box sx={{ ml: 4, mb: 2 }}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Select frequencies</InputLabel>
-                      <Select
-                        multiple
-                        value={discount.selectedFrequencies}
-                        onChange={(e) =>
-                          updateMembershipDiscount(
-                            discount.id,
-                            'selectedFrequencies',
-                            e.target.value
-                          )
-                        }
-                        input={<OutlinedInput label="Select frequencies" />}
-                        renderValue={(selected) => (
-                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                            {selected.map((value) => (
-                              <Chip key={value} label={value} size="small" />
-                            ))}
-                          </Box>
-                        )}
-                      >
-                        {paymentFrequencies.map((freq) => (
-                          <MenuItem key={freq} value={freq}>
-                            <Checkbox
-                              checked={discount.selectedFrequencies.indexOf(freq) > -1}
-                            />
-                            <Typography variant="body2">{freq}</Typography>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </Box>
-                )}
-              <FormControlLabel
-                value="all_frequencies"
-                control={<Radio />}
-                label={<Typography variant="body2">All payment frequencies</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              Related only to selected membership offer
-            </FormHelperText>
-          </FormControl>
+              </Tooltip>
+            </Grid>
+          </Grid>
 
           {/* Duration */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
@@ -879,13 +1058,14 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                 updateMembershipDiscount(discount.id, 'durationType', e.target.value)
               }
             >
-              <FormControlLabel
-                value="months"
-                control={<Radio />}
-                label={<Typography variant="body2">Months</Typography>}
-              />
-              {discount.durationType === 'months' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 0.5 }}>
+                  <FormControlLabel
+                    value="months"
+                    control={<Radio />}
+                    label={<Typography variant="body2">Months</Typography>}
+                    sx={{ mr: 0 }}
+                  />
                   <TextField
                     label="Number"
                     type="number"
@@ -894,84 +1074,48 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                       updateMembershipDiscount(discount.id, 'durationMonths', e.target.value)
                     }
                     size="small"
-                    sx={{ width: 200 }}
+                    disabled={discount.durationType !== 'months'}
+                    sx={{ 
+                      width: 200,
+                      '& .MuiInputBase-root': {
+                        backgroundColor: discount.durationType !== 'months' ? 'action.disabledBackground' : 'background.paper',
+                      },
+                    }}
                     InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: 1 }}
+                    inputProps={{ min: 1, step: 1 }}
                   />
                 </Box>
-              )}
-              <FormControlLabel
-                value="permanent"
-                control={<Radio />}
-                label={<Typography variant="body2">Permanent</Typography>}
-              />
-              <FormControlLabel
-                value="minimum_duration"
-                control={<Radio />}
-                label={<Typography variant="body2">Minimum duration</Typography>}
-              />
-              {discount.durationType === 'minimum_duration' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <TextField
-                    label="Number"
-                    type="number"
-                    value={discount.durationMinimum}
-                    onChange={(e) =>
-                      updateMembershipDiscount(discount.id, 'durationMinimum', e.target.value)
-                    }
-                    size="small"
-                    sx={{ width: 200 }}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: 1 }}
-                  />
-                </Box>
-              )}
+                <FormHelperText sx={{ ml: 4, mt: 0.5, mb: 1.5 }}>
+                  Applies the discount for a selected number of months.
+                </FormHelperText>
+              </Box>
+              <Box>
+                <FormControlLabel
+                  value="permanent"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Permanent</Typography>}
+                  sx={{ mb: 0.5 }}
+                />
+                <FormHelperText sx={{ ml: 4, mt: 0.5, mb: 1.5 }}>
+                  This discount applies for the entire duration of the membership offer.
+                </FormHelperText>
+              </Box>
+              <Box>
+                <FormControlLabel
+                  value="minimum_duration"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Minimum duration</Typography>}
+                  sx={{ mb: 0.5 }}
+                />
+                <FormHelperText sx={{ ml: 4, mt: 0.5 }}>
+                  The minimum duration is defined by the selected membership offer.
+                </FormHelperText>
+              </Box>
             </RadioGroup>
           </FormControl>
 
-          {/* Type */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Type
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.discountType}
-              onChange={(e) =>
-                updateMembershipDiscount(discount.id, 'discountType', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="substitute_price"
-                control={<Radio />}
-                label={<Typography variant="body2">Substitute price</Typography>}
-              />
-              <FormControlLabel
-                value="percentage"
-                control={<Radio />}
-                label={<Typography variant="body2">Percentage</Typography>}
-              />
-              <FormControlLabel
-                value="absolute_price"
-                control={<Radio />}
-                label={<Typography variant="body2">Absolute price</Typography>}
-              />
-            </RadioGroup>
-          </FormControl>
-
-          {/* Value */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Value
-          </Typography>
-          <TextField
-            label="Value"
-            type="number"
-            value={discount.value}
-            onChange={(e) => updateMembershipDiscount(discount.id, 'value', e.target.value)}
-            size="small"
-            sx={{ mb: 3, width: 200 }}
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ min: 0, step: discount.discountType === 'percentage' ? 1 : 0.01 }}
-          />
+          {/* Type + Value */}
+          {renderTypeAndValue(discount, updateMembershipDiscount, membershipValueInputRefs.current[discount.id])}
 
           {/* Facility based price */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
@@ -1035,103 +1179,300 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             </Button>
           </Box>
 
-          {/* Discount starter package */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Discount starter package
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 2, width: '100%' }}>
-            <RadioGroup
-              value={discount.starterPackageEnabled ? 'on' : 'off'}
-              onChange={(e) =>
-                updateMembershipDiscount(
-                  discount.id,
-                  'starterPackageEnabled',
-                  e.target.value === 'on'
-                )
-              }
-            >
-              <FormControlLabel
-                value="off"
-                control={<Radio />}
-                label={<Typography variant="body2">Off</Typography>}
-              />
-              <FormControlLabel
-                value="on"
-                control={<Radio />}
-                label={<Typography variant="body2">On</Typography>}
-              />
-            </RadioGroup>
-          </FormControl>
-
-          {discount.starterPackageEnabled && (
-            <Box sx={{ ml: 4, mb: 2 }}>
-              <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 500 }}>
-                Type
-              </Typography>
-              <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-                <RadioGroup
-                  value={discount.starterPackageType}
-                  onChange={(e) =>
-                    updateMembershipDiscount(discount.id, 'starterPackageType', e.target.value)
-                  }
-                >
-                  <FormControlLabel
-                    value="percentage"
-                    control={<Radio />}
-                    label={<Typography variant="body2">Percentage</Typography>}
-                  />
-                  <FormControlLabel
-                    value="substitute_price"
-                    control={<Radio />}
-                    label={<Typography variant="body2">Substitute price</Typography>}
-                  />
-                  <FormControlLabel
-                    value="absolute_discount"
-                    control={<Radio />}
-                    label={<Typography variant="body2">Absolute discount</Typography>}
-                  />
-                </RadioGroup>
-              </FormControl>
-
-              <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 500 }}>
-                Value
-              </Typography>
-              <TextField
-                label="Value"
-                type="number"
-                value={discount.starterPackageValue}
-                onChange={(e) =>
-                  updateMembershipDiscount(discount.id, 'starterPackageValue', e.target.value)
+          {/* Starter package */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 500 }}>
+              Starter package
+            </Typography>
+            <Switch
+              checked={discount.starterPackageEnabled}
+              onChange={(e) => {
+                const isEnabled = e.target.checked;
+                updateMembershipDiscount(discount.id, 'starterPackageEnabled', isEnabled);
+                
+                if (isEnabled) {
+                  // Initialize defaults when turning ON
+                  updateMembershipDiscount(discount.id, 'starterPackageType', 'percentage');
+                  updateMembershipDiscount(discount.id, 'starterPackageValue', '');
+                  updateMembershipDiscount(discount.id, 'starterPackageFacilities', []);
+                } else {
+                  // Reset all fields when turning OFF
+                  updateMembershipDiscount(discount.id, 'starterPackageType', null);
+                  updateMembershipDiscount(discount.id, 'starterPackageValue', null);
+                  updateMembershipDiscount(discount.id, 'starterPackageFacilities', []);
                 }
-                size="small"
-                sx={{ width: 200 }}
-                InputLabelProps={{ shrink: true }}
-                inputProps={{
-                  min: 0,
-                  step: discount.starterPackageType === 'percentage' ? 1 : 0.01,
+              }}
+            />
+          </Box>
+
+          {discount.starterPackageEnabled && (() => {
+            // Initialize ref for starter package if it doesn't exist
+            if (!membershipStarterPackageValueInputRefs.current[discount.id]) {
+              membershipStarterPackageValueInputRefs.current[discount.id] = React.createRef();
+            }
+            
+            // Create a temporary discount object that matches the renderTypeAndValue expectations
+            const starterPackageDiscount = {
+              id: discount.id,
+              discountType: discount.starterPackageType === 'absolute_discount' 
+                ? 'absolute_price' 
+                : discount.starterPackageType,
+              value: discount.starterPackageValue,
+            };
+            
+            // Create update function for starter package
+            const updateStarterPackage = (id, field, value) => {
+              if (field === 'discountType') {
+                // Map back to the stored format
+                const mappedType = value === 'absolute_price' ? 'absolute_discount' : value;
+                updateMembershipDiscount(id, 'starterPackageType', mappedType);
+              } else if (field === 'value') {
+                updateMembershipDiscount(id, 'starterPackageValue', value);
+              }
+            };
+            
+            return (
+              <Paper
+                sx={{
+                  p: 3,
+                  mb: 3,
+                  border: '1px solid',
+                  borderColor: 'neutral.200',
+                  borderRadius: 2,
+                  backgroundColor: 'background.paper',
                 }}
-              />
-            </Box>
-          )}
-        </Paper>
-      ))}
+              >
+                {/* Type + Value */}
+                <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
+                  Type + Value
+                </Typography>
+                
+                <Grid container spacing={3} sx={{ mb: 4 }}>
+                  {/* Type Column */}
+                  <Grid item xs={6}>
+                    <FormControl component="fieldset" sx={{ width: '100%' }}>
+                      <FormLabel 
+                        component="legend" 
+                        sx={{ 
+                          mb: 1.5, 
+                          fontSize: 14, 
+                          fontWeight: 500, 
+                          color: 'text.primary' 
+                        }}
+                      >
+                        Discount type
+                      </FormLabel>
+                      <RadioGroup
+                        value={starterPackageDiscount.discountType || ''}
+                        onChange={(e) => {
+                          const newType = e.target.value;
+                          updateStarterPackage(discount.id, 'discountType', newType);
+                          // Clear value when changing type
+                          updateStarterPackage(discount.id, 'value', '');
+                          // Auto-focus value input after type selection
+                          setTimeout(() => {
+                            if (membershipStarterPackageValueInputRefs.current[discount.id] && 
+                                membershipStarterPackageValueInputRefs.current[discount.id].current) {
+                              membershipStarterPackageValueInputRefs.current[discount.id].current.focus();
+                            }
+                          }, 100);
+                        }}
+                      >
+                        <FormControlLabel
+                          value="substitute_price"
+                          control={<Radio />}
+                          label={<Typography variant="body2">Substitute price</Typography>}
+                        />
+                        <FormControlLabel
+                          value="percentage"
+                          control={<Radio />}
+                          label={<Typography variant="body2">Percentage</Typography>}
+                        />
+                        <FormControlLabel
+                          value="absolute_price"
+                          control={<Radio />}
+                          label={<Typography variant="body2">Absolute discount</Typography>}
+                        />
+                      </RadioGroup>
+                    </FormControl>
+                  </Grid>
 
-      <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button
-          variant="contained"
-          startIcon={<AddRounded />}
-          onClick={addMembershipDiscount}
-          sx={{ textTransform: 'none' }}
-        >
-          Add a membership fee discount
-        </Button>
+                  {/* Value Column */}
+                  <Grid item xs={6}>
+                    {(() => {
+                      const valueConfig = getValueInputConfig(starterPackageDiscount.discountType);
+                      const isValueEnabled = Boolean(starterPackageDiscount.discountType);
+                      
+                      // Validate value based on type
+                      const validateValue = (value) => {
+                        if (!value || value === '') return '';
+                        const numValue = parseFloat(value);
+                        
+                        if (starterPackageDiscount.discountType === 'percentage') {
+                          if (numValue < 1 || numValue > 100) {
+                            return 'Value must be between 1 and 100';
+                          }
+                        } else if (starterPackageDiscount.discountType === 'absolute_price' || 
+                                   starterPackageDiscount.discountType === 'substitute_price') {
+                          if (numValue <= 0) {
+                            return 'Value must be greater than 0';
+                          }
+                        }
+                        return '';
+                      };
+                      
+                      const errorMessage = validateValue(starterPackageDiscount.value);
+
+                      return (
+                        <FormControl fullWidth>
+                          <FormLabel 
+                            component="legend" 
+                            sx={{ 
+                              mb: 1.5, 
+                              fontSize: 14, 
+                              fontWeight: 500, 
+                              color: isValueEnabled ? 'text.primary' : 'text.disabled'
+                            }}
+                          >
+                            {valueConfig.label}
+                          </FormLabel>
+                          <TextField
+                            inputRef={membershipStarterPackageValueInputRefs.current[discount.id]}
+                            placeholder={valueConfig.placeholder}
+                            type="number"
+                            value={starterPackageDiscount.value || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              updateStarterPackage(discount.id, 'value', value);
+                            }}
+                            size="small"
+                            disabled={!isValueEnabled}
+                            error={Boolean(errorMessage && starterPackageDiscount.value)}
+                            helperText={
+                              errorMessage && starterPackageDiscount.value
+                                ? errorMessage
+                                : isValueEnabled
+                                ? valueConfig.helperText
+                                : 'Select a discount type first'
+                            }
+                            InputLabelProps={{ shrink: true }}
+                            InputProps={{
+                              endAdornment: valueConfig.suffix && isValueEnabled ? (
+                                <Typography
+                                  variant="body2"
+                                  sx={{ 
+                                    color: 'text.secondary',
+                                    ml: 1,
+                                    userSelect: 'none'
+                                  }}
+                                >
+                                  {valueConfig.suffix}
+                                </Typography>
+                              ) : null,
+                            }}
+                            inputProps={{
+                              min: valueConfig.min,
+                              max: valueConfig.max,
+                              step: valueConfig.step,
+                            }}
+                            sx={{
+                              '& .MuiInputBase-root': {
+                                backgroundColor: isValueEnabled ? 'background.paper' : 'action.disabledBackground',
+                              },
+                            }}
+                          />
+                        </FormControl>
+                      );
+                    })()}
+                  </Grid>
+                </Grid>
+
+                {/* Facility based price */}
+                <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
+                  Facility based price
+                </Typography>
+                <Box>
+                  {discount.starterPackageFacilities.map((facilityPrice) => (
+                    <Box
+                      key={facilityPrice.id}
+                      sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'flex-start' }}
+                    >
+                      <FormControl sx={{ flex: 1 }} size="small">
+                        <InputLabel>Facility</InputLabel>
+                        <Select
+                          label="Facility"
+                          value={facilityPrice.facility}
+                          onChange={(e) =>
+                            updateStarterPackageFacilityPrice(
+                              discount.id,
+                              facilityPrice.id,
+                              'facility',
+                              e.target.value
+                            )
+                          }
+                        >
+                          {facilities.map((facility) => (
+                            <MenuItem key={facility} value={facility}>
+                              {facility}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <TextField
+                        label="Value"
+                        type="number"
+                        value={facilityPrice.value}
+                        onChange={(e) =>
+                          updateStarterPackageFacilityPrice(discount.id, facilityPrice.id, 'value', e.target.value)
+                        }
+                        size="small"
+                        sx={{ flex: 1 }}
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ min: 0, step: 0.01 }}
+                      />
+                      <IconButton
+                        size="small"
+                        onClick={() => deleteStarterPackageFacilityPrice(discount.id, facilityPrice.id)}
+                        sx={{ color: 'error.main', mt: 0.5 }}
+                      >
+                        <DeleteRounded />
+                      </IconButton>
+                    </Box>
+                  ))}
+                  <Button
+                    variant="outlined"
+                    startIcon={<AddRounded />}
+                    onClick={() => addStarterPackageFacilityPrice(discount.id)}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Add facility substitute based price
+                  </Button>
+                </Box>
+              </Paper>
+            );
+          })()}
+            </Paper>
+          );
+        })}
+
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <Button
+            variant="contained"
+            startIcon={<AddRounded />}
+            onClick={addMembershipDiscount}
+            sx={{ textTransform: 'none' }}
+          >
+            Add a membership fee discount
+          </Button>
+        </Box>
       </Box>
-    </Box>
-  );
+    );
+  };
 
-  const renderFlatFeeDiscounts = () => (
-    <Box>
-      {flatFeeDiscounts.length === 0 && (
+  const renderFlatFeeDiscounts = () => {
+    return (
+      <Box>
+        {flatFeeDiscounts.length === 0 && (
         <Box
           sx={{
             py: 6,
@@ -1149,11 +1490,17 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         </Box>
       )}
 
-      {flatFeeDiscounts.map((discount, index) => (
-        <Paper
-          key={discount.id}
-          sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
-        >
+      {flatFeeDiscounts.map((discount, index) => {
+        // Initialize ref for this discount if it doesn't exist
+        if (!flatFeeValueInputRefs.current[discount.id]) {
+          flatFeeValueInputRefs.current[discount.id] = React.createRef();
+        }
+        
+        return (
+          <Paper
+            key={discount.id}
+            sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
+          >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
               Flat Fee Discount {index + 1}
@@ -1167,201 +1514,102 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             </IconButton>
           </Box>
 
-          {/* Select membership offer */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Select membership offer
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.membershipOfferMode}
-              onChange={(e) => {
-                const newMode = e.target.value;
-                updateFlatFeeDiscount(discount.id, 'membershipOfferMode', newMode);
-                if (newMode === 'all') {
-                  updateFlatFeeDiscount(discount.id, 'membershipOfferId', null);
-                }
-              }}
-            >
-              <FormControlLabel
-                value="single"
-                control={<Radio />}
-                label={<Typography variant="body2">Membership offer</Typography>}
+          {/* Membership offer, Term, Payment frequency in one row */}
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={4}>
+              <Autocomplete
+                size="small"
+                options={membershipOffers}
+                value={discount.membershipOfferId}
+                onChange={(event, newValue) => {
+                  const selectedOffer = newValue || 'All';
+                  updateFlatFeeDiscount(discount.id, 'membershipOfferId', selectedOffer);
+                  
+                  // Auto-disable logic
+                  if (selectedOffer === 'All') {
+                    updateFlatFeeDiscount(discount.id, 'selectedTerm', 'All');
+                    updateFlatFeeDiscount(discount.id, 'selectedFrequency', 'All');
+                  } else {
+                    // Reset dependent fields when switching from "All" to specific offer
+                    updateFlatFeeDiscount(discount.id, 'selectedTerm', '');
+                    updateFlatFeeDiscount(discount.id, 'selectedFrequency', '');
+                  }
+                }}
+                renderInput={(params) => <TextField {...params} label="Membership offer" />}
+                fullWidth
               />
-              {discount.membershipOfferMode === 'single' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Select offer</InputLabel>
-                    <Select
-                      value={discount.membershipOfferId || ''}
-                      onChange={(e) =>
-                        updateFlatFeeDiscount(discount.id, 'membershipOfferId', e.target.value)
+            </Grid>
+            
+            <Grid item xs={4}>
+              <Tooltip
+                title={discount.membershipOfferId === 'All' ? "This field is automatically set to All when selecting 'All membership offers'." : ""}
+                arrow
+                placement="top"
+              >
+                <Box>
+                  <Autocomplete
+                    size="small"
+                    options={terms}
+                    value={discount.selectedTerm}
+                    onChange={(event, newValue) => {
+                      updateFlatFeeDiscount(discount.id, 'selectedTerm', newValue || '');
+                    }}
+                    renderInput={(params) => <TextField {...params} label="Term" />}
+                    fullWidth
+                    disabled={discount.membershipOfferId === 'All'}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        opacity: discount.membershipOfferId === 'All' ? 0.6 : 1,
                       }
-                      label="Select offer"
-                    >
-                      {membershipOffers.map((offer) => (
-                        <MenuItem key={offer} value={offer}>
-                          <Typography variant="body2">{offer}</Typography>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    }}
+                  />
                 </Box>
-              )}
-              <FormControlLabel
-                value="all"
-                control={<Radio />}
-                label={<Typography variant="body2">All offers</Typography>}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              If 'All offers' is selected, then all payment frequencies and terms are selected automatically.
-            </FormHelperText>
-          </FormControl>
-
-          {/* Term */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Term
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.termMode}
-              onChange={(e) => updateFlatFeeDiscount(discount.id, 'termMode', e.target.value)}
-            >
-              <FormControlLabel
-                value="if_term"
-                control={<Radio />}
-                label={<Typography variant="body2">If term</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-              {discount.termMode === 'if_term' && discount.membershipOfferMode !== 'all' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Select terms</InputLabel>
-                    <Select
-                      multiple
-                      value={discount.selectedTerms}
-                      onChange={(e) =>
-                        updateFlatFeeDiscount(discount.id, 'selectedTerms', e.target.value)
+              </Tooltip>
+            </Grid>
+            
+            <Grid item xs={4}>
+              <Tooltip
+                title={discount.membershipOfferId === 'All' ? "This field is automatically set to All when selecting 'All membership offers'." : ""}
+                arrow
+                placement="top"
+              >
+                <Box>
+                  <Autocomplete
+                    size="small"
+                    options={paymentFrequencies}
+                    value={discount.selectedFrequency}
+                    onChange={(event, newValue) => {
+                      updateFlatFeeDiscount(discount.id, 'selectedFrequency', newValue || '');
+                    }}
+                    renderInput={(params) => <TextField {...params} label="Payment frequency" />}
+                    fullWidth
+                    disabled={discount.membershipOfferId === 'All'}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        opacity: discount.membershipOfferId === 'All' ? 0.6 : 1,
                       }
-                      input={<OutlinedInput label="Select terms" />}
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {selected.map((value) => (
-                            <Chip key={value} label={value} size="small" />
-                          ))}
-                        </Box>
-                      )}
-                    >
-                      {terms.map((term) => (
-                        <MenuItem key={term} value={term}>
-                          <Checkbox checked={discount.selectedTerms.indexOf(term) > -1} />
-                          <Typography variant="body2">{term}</Typography>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    }}
+                  />
                 </Box>
-              )}
-              <FormControlLabel
-                value="all_terms"
-                control={<Radio />}
-                label={<Typography variant="body2">All terms</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              Related only to selected membership offer
-            </FormHelperText>
-          </FormControl>
-
-          {/* Payment frequency */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Payment frequency
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.frequencyMode}
-              onChange={(e) =>
-                updateFlatFeeDiscount(discount.id, 'frequencyMode', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="payment_frequency"
-                control={<Radio />}
-                label={<Typography variant="body2">Payment frequency</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-              {discount.frequencyMode === 'payment_frequency' &&
-                discount.membershipOfferMode !== 'all' && (
-                  <Box sx={{ ml: 4, mb: 2 }}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Select frequencies</InputLabel>
-                      <Select
-                        multiple
-                        value={discount.selectedFrequencies}
-                        onChange={(e) =>
-                          updateFlatFeeDiscount(
-                            discount.id,
-                            'selectedFrequencies',
-                            e.target.value
-                          )
-                        }
-                        input={<OutlinedInput label="Select frequencies" />}
-                        renderValue={(selected) => (
-                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                            {selected.map((value) => (
-                              <Chip key={value} label={value} size="small" />
-                            ))}
-                          </Box>
-                        )}
-                      >
-                        {paymentFrequencies.map((freq) => (
-                          <MenuItem key={freq} value={freq}>
-                            <Checkbox
-                              checked={discount.selectedFrequencies.indexOf(freq) > -1}
-                            />
-                            <Typography variant="body2">{freq}</Typography>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </Box>
-                )}
-              <FormControlLabel
-                value="all_frequencies"
-                control={<Radio />}
-                label={<Typography variant="body2">All payment frequencies</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              Related only to selected membership offer
-            </FormHelperText>
-          </FormControl>
+              </Tooltip>
+            </Grid>
+          </Grid>
 
           {/* Flat fee */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
             Flat fee
           </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.flatFeeType}
-              onChange={(e) =>
-                updateFlatFeeDiscount(discount.id, 'flatFeeType', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="one_time"
-                control={<Radio />}
-                label={<Typography variant="body2">One time</Typography>}
-              />
-              <FormControlLabel
-                value="another_one"
-                control={<Radio />}
-                label={<Typography variant="body2">Another one</Typography>}
-              />
-            </RadioGroup>
-          </FormControl>
+          <Autocomplete
+            size="small"
+            options={flatFees}
+            value={discount.selectedFlatFee}
+            onChange={(event, newValue) => {
+              updateFlatFeeDiscount(discount.id, 'selectedFlatFee', newValue || 'All');
+            }}
+            renderInput={(params) => <TextField {...params} label="Flat fee type" />}
+            fullWidth
+            sx={{ mb: 3 }}
+          />
 
           {/* Duration */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
@@ -1374,13 +1622,14 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                 updateFlatFeeDiscount(discount.id, 'durationType', e.target.value)
               }
             >
-              <FormControlLabel
-                value="months"
-                control={<Radio />}
-                label={<Typography variant="body2">Months</Typography>}
-              />
-              {discount.durationType === 'months' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 0.5 }}>
+                  <FormControlLabel
+                    value="months"
+                    control={<Radio />}
+                    label={<Typography variant="body2">Months</Typography>}
+                    sx={{ mr: 0 }}
+                  />
                   <TextField
                     label="Number"
                     type="number"
@@ -1389,84 +1638,48 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                       updateFlatFeeDiscount(discount.id, 'durationMonths', e.target.value)
                     }
                     size="small"
-                    sx={{ width: 200 }}
+                    disabled={discount.durationType !== 'months'}
+                    sx={{ 
+                      width: 200,
+                      '& .MuiInputBase-root': {
+                        backgroundColor: discount.durationType !== 'months' ? 'action.disabledBackground' : 'background.paper',
+                      },
+                    }}
                     InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: 1 }}
+                    inputProps={{ min: 1, step: 1 }}
                   />
                 </Box>
-              )}
-              <FormControlLabel
-                value="permanent"
-                control={<Radio />}
-                label={<Typography variant="body2">Permanent</Typography>}
-              />
-              <FormControlLabel
-                value="minimum_duration"
-                control={<Radio />}
-                label={<Typography variant="body2">Minimum duration</Typography>}
-              />
-              {discount.durationType === 'minimum_duration' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <TextField
-                    label="Number"
-                    type="number"
-                    value={discount.durationMinimum}
-                    onChange={(e) =>
-                      updateFlatFeeDiscount(discount.id, 'durationMinimum', e.target.value)
-                    }
-                    size="small"
-                    sx={{ width: 200 }}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: 1 }}
-                  />
-                </Box>
-              )}
+                <FormHelperText sx={{ ml: 4, mt: 0.5, mb: 1.5 }}>
+                  Applies the discount for a selected number of months.
+                </FormHelperText>
+              </Box>
+              <Box>
+                <FormControlLabel
+                  value="permanent"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Permanent</Typography>}
+                  sx={{ mb: 0.5 }}
+                />
+                <FormHelperText sx={{ ml: 4, mt: 0.5, mb: 1.5 }}>
+                  This discount applies for the entire duration of the membership offer.
+                </FormHelperText>
+              </Box>
+              <Box>
+                <FormControlLabel
+                  value="minimum_duration"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Minimum duration</Typography>}
+                  sx={{ mb: 0.5 }}
+                />
+                <FormHelperText sx={{ ml: 4, mt: 0.5 }}>
+                  The minimum duration is defined by the selected membership offer.
+                </FormHelperText>
+              </Box>
             </RadioGroup>
           </FormControl>
 
-          {/* Type */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Type
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.discountType}
-              onChange={(e) =>
-                updateFlatFeeDiscount(discount.id, 'discountType', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="substitute_price"
-                control={<Radio />}
-                label={<Typography variant="body2">Substitute price</Typography>}
-              />
-              <FormControlLabel
-                value="percentage"
-                control={<Radio />}
-                label={<Typography variant="body2">Percentage</Typography>}
-              />
-              <FormControlLabel
-                value="absolute_price"
-                control={<Radio />}
-                label={<Typography variant="body2">Absolute price</Typography>}
-              />
-            </RadioGroup>
-          </FormControl>
-
-          {/* Value */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Value
-          </Typography>
-          <TextField
-            label="Value"
-            type="number"
-            value={discount.value}
-            onChange={(e) => updateFlatFeeDiscount(discount.id, 'value', e.target.value)}
-            size="small"
-            sx={{ mb: 3, width: 200 }}
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ min: 0, step: discount.discountType === 'percentage' ? 1 : 0.01 }}
-          />
+          {/* Type + Value */}
+          {renderTypeAndValue(discount, updateFlatFeeDiscount, flatFeeValueInputRefs.current[discount.id])}
 
           {/* Facility based price */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
@@ -1529,8 +1742,9 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               Add facility substitute based price
             </Button>
           </Box>
-        </Paper>
-      ))}
+          </Paper>
+        );
+      })}
 
       <Box sx={{ display: 'flex', gap: 2 }}>
         <Button
@@ -1543,11 +1757,13 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         </Button>
       </Box>
     </Box>
-  );
+    );
+  };
 
-  const renderModuleDiscounts = () => (
-    <Box>
-      {moduleDiscounts.length === 0 && (
+  const renderModuleDiscounts = () => {
+    return (
+      <Box>
+        {moduleDiscounts.length === 0 && (
         <Box
           sx={{
             py: 6,
@@ -1565,11 +1781,17 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         </Box>
       )}
 
-      {moduleDiscounts.map((discount, index) => (
-        <Paper
-          key={discount.id}
-          sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
-        >
+      {moduleDiscounts.map((discount, index) => {
+        // Initialize ref for this discount if it doesn't exist
+        if (!moduleValueInputRefs.current[discount.id]) {
+          moduleValueInputRefs.current[discount.id] = React.createRef();
+        }
+        
+        return (
+          <Paper
+            key={discount.id}
+            sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
+          >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
               Additional Modules Discount {index + 1}
@@ -1583,201 +1805,102 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             </IconButton>
           </Box>
 
-          {/* Select membership offer */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Select membership offer
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.membershipOfferMode}
-              onChange={(e) => {
-                const newMode = e.target.value;
-                updateModuleDiscount(discount.id, 'membershipOfferMode', newMode);
-                if (newMode === 'all') {
-                  updateModuleDiscount(discount.id, 'membershipOfferId', null);
-                }
-              }}
-            >
-              <FormControlLabel
-                value="single"
-                control={<Radio />}
-                label={<Typography variant="body2">Membership offer</Typography>}
+          {/* Membership offer, Term, Payment frequency in one row */}
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={4}>
+              <Autocomplete
+                size="small"
+                options={membershipOffers}
+                value={discount.membershipOfferId}
+                onChange={(event, newValue) => {
+                  const selectedOffer = newValue || 'All';
+                  updateModuleDiscount(discount.id, 'membershipOfferId', selectedOffer);
+                  
+                  // Auto-disable logic
+                  if (selectedOffer === 'All') {
+                    updateModuleDiscount(discount.id, 'selectedTerm', 'All');
+                    updateModuleDiscount(discount.id, 'selectedFrequency', 'All');
+                  } else {
+                    // Reset dependent fields when switching from "All" to specific offer
+                    updateModuleDiscount(discount.id, 'selectedTerm', '');
+                    updateModuleDiscount(discount.id, 'selectedFrequency', '');
+                  }
+                }}
+                renderInput={(params) => <TextField {...params} label="Membership offer" />}
+                fullWidth
               />
-              {discount.membershipOfferMode === 'single' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Select offer</InputLabel>
-                    <Select
-                      value={discount.membershipOfferId || ''}
-                      onChange={(e) =>
-                        updateModuleDiscount(discount.id, 'membershipOfferId', e.target.value)
+            </Grid>
+            
+            <Grid item xs={4}>
+              <Tooltip
+                title={discount.membershipOfferId === 'All' ? "This field is automatically set to All when selecting 'All membership offers'." : ""}
+                arrow
+                placement="top"
+              >
+                <Box>
+                  <Autocomplete
+                    size="small"
+                    options={terms}
+                    value={discount.selectedTerm}
+                    onChange={(event, newValue) => {
+                      updateModuleDiscount(discount.id, 'selectedTerm', newValue || '');
+                    }}
+                    renderInput={(params) => <TextField {...params} label="Term" />}
+                    fullWidth
+                    disabled={discount.membershipOfferId === 'All'}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        opacity: discount.membershipOfferId === 'All' ? 0.6 : 1,
                       }
-                      label="Select offer"
-                    >
-                      {membershipOffers.map((offer) => (
-                        <MenuItem key={offer} value={offer}>
-                          <Typography variant="body2">{offer}</Typography>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    }}
+                  />
                 </Box>
-              )}
-              <FormControlLabel
-                value="all"
-                control={<Radio />}
-                label={<Typography variant="body2">All offers</Typography>}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              If 'All offers' is selected, then all payment frequencies and terms are selected automatically.
-            </FormHelperText>
-          </FormControl>
-
-          {/* Term */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Term
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.termMode}
-              onChange={(e) => updateModuleDiscount(discount.id, 'termMode', e.target.value)}
-            >
-              <FormControlLabel
-                value="if_term"
-                control={<Radio />}
-                label={<Typography variant="body2">If term</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-              {discount.termMode === 'if_term' && discount.membershipOfferMode !== 'all' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Select terms</InputLabel>
-                    <Select
-                      multiple
-                      value={discount.selectedTerms}
-                      onChange={(e) =>
-                        updateModuleDiscount(discount.id, 'selectedTerms', e.target.value)
+              </Tooltip>
+            </Grid>
+            
+            <Grid item xs={4}>
+              <Tooltip
+                title={discount.membershipOfferId === 'All' ? "This field is automatically set to All when selecting 'All membership offers'." : ""}
+                arrow
+                placement="top"
+              >
+                <Box>
+                  <Autocomplete
+                    size="small"
+                    options={paymentFrequencies}
+                    value={discount.selectedFrequency}
+                    onChange={(event, newValue) => {
+                      updateModuleDiscount(discount.id, 'selectedFrequency', newValue || '');
+                    }}
+                    renderInput={(params) => <TextField {...params} label="Payment frequency" />}
+                    fullWidth
+                    disabled={discount.membershipOfferId === 'All'}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        opacity: discount.membershipOfferId === 'All' ? 0.6 : 1,
                       }
-                      input={<OutlinedInput label="Select terms" />}
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {selected.map((value) => (
-                            <Chip key={value} label={value} size="small" />
-                          ))}
-                        </Box>
-                      )}
-                    >
-                      {terms.map((term) => (
-                        <MenuItem key={term} value={term}>
-                          <Checkbox checked={discount.selectedTerms.indexOf(term) > -1} />
-                          <Typography variant="body2">{term}</Typography>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    }}
+                  />
                 </Box>
-              )}
-              <FormControlLabel
-                value="all_terms"
-                control={<Radio />}
-                label={<Typography variant="body2">All terms</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              Related only to selected membership offer
-            </FormHelperText>
-          </FormControl>
-
-          {/* Payment frequency */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Payment frequency
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.frequencyMode}
-              onChange={(e) =>
-                updateModuleDiscount(discount.id, 'frequencyMode', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="payment_frequency"
-                control={<Radio />}
-                label={<Typography variant="body2">Payment frequency</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-              {discount.frequencyMode === 'payment_frequency' &&
-                discount.membershipOfferMode !== 'all' && (
-                  <Box sx={{ ml: 4, mb: 2 }}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Select frequencies</InputLabel>
-                      <Select
-                        multiple
-                        value={discount.selectedFrequencies}
-                        onChange={(e) =>
-                          updateModuleDiscount(
-                            discount.id,
-                            'selectedFrequencies',
-                            e.target.value
-                          )
-                        }
-                        input={<OutlinedInput label="Select frequencies" />}
-                        renderValue={(selected) => (
-                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                            {selected.map((value) => (
-                              <Chip key={value} label={value} size="small" />
-                            ))}
-                          </Box>
-                        )}
-                      >
-                        {paymentFrequencies.map((freq) => (
-                          <MenuItem key={freq} value={freq}>
-                            <Checkbox
-                              checked={discount.selectedFrequencies.indexOf(freq) > -1}
-                            />
-                            <Typography variant="body2">{freq}</Typography>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </Box>
-                )}
-              <FormControlLabel
-                value="all_frequencies"
-                control={<Radio />}
-                label={<Typography variant="body2">All payment frequencies</Typography>}
-                disabled={discount.membershipOfferMode === 'all'}
-              />
-            </RadioGroup>
-            <FormHelperText sx={{ ml: 0, color: 'text.secondary' }}>
-              Related only to selected membership offer
-            </FormHelperText>
-          </FormControl>
+              </Tooltip>
+            </Grid>
+          </Grid>
 
           {/* Additional modules */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
             Additional modules
           </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.moduleType}
-              onChange={(e) =>
-                updateModuleDiscount(discount.id, 'moduleType', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="one_time"
-                control={<Radio />}
-                label={<Typography variant="body2">One time</Typography>}
-              />
-              <FormControlLabel
-                value="another_one"
-                control={<Radio />}
-                label={<Typography variant="body2">Another one</Typography>}
-              />
-            </RadioGroup>
-          </FormControl>
+          <Autocomplete
+            size="small"
+            options={modules}
+            value={discount.selectedModule}
+            onChange={(event, newValue) => {
+              updateModuleDiscount(discount.id, 'selectedModule', newValue || 'All');
+            }}
+            renderInput={(params) => <TextField {...params} label="Module type" />}
+            fullWidth
+            sx={{ mb: 3 }}
+          />
 
           {/* Duration */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
@@ -1790,13 +1913,14 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                 updateModuleDiscount(discount.id, 'durationType', e.target.value)
               }
             >
-              <FormControlLabel
-                value="months"
-                control={<Radio />}
-                label={<Typography variant="body2">Months</Typography>}
-              />
-              {discount.durationType === 'months' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 0.5 }}>
+                  <FormControlLabel
+                    value="months"
+                    control={<Radio />}
+                    label={<Typography variant="body2">Months</Typography>}
+                    sx={{ mr: 0 }}
+                  />
                   <TextField
                     label="Number"
                     type="number"
@@ -1805,84 +1929,48 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                       updateModuleDiscount(discount.id, 'durationMonths', e.target.value)
                     }
                     size="small"
-                    sx={{ width: 200 }}
+                    disabled={discount.durationType !== 'months'}
+                    sx={{ 
+                      width: 200,
+                      '& .MuiInputBase-root': {
+                        backgroundColor: discount.durationType !== 'months' ? 'action.disabledBackground' : 'background.paper',
+                      },
+                    }}
                     InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: 1 }}
+                    inputProps={{ min: 1, step: 1 }}
                   />
                 </Box>
-              )}
-              <FormControlLabel
-                value="permanent"
-                control={<Radio />}
-                label={<Typography variant="body2">Permanent</Typography>}
-              />
-              <FormControlLabel
-                value="minimum_duration"
-                control={<Radio />}
-                label={<Typography variant="body2">Minimum duration</Typography>}
-              />
-              {discount.durationType === 'minimum_duration' && (
-                <Box sx={{ ml: 4, mb: 2 }}>
-                  <TextField
-                    label="Number"
-                    type="number"
-                    value={discount.durationMinimum}
-                    onChange={(e) =>
-                      updateModuleDiscount(discount.id, 'durationMinimum', e.target.value)
-                    }
-                    size="small"
-                    sx={{ width: 200 }}
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: 1 }}
-                  />
-                </Box>
-              )}
+                <FormHelperText sx={{ ml: 4, mt: 0.5, mb: 1.5 }}>
+                  Applies the discount for a selected number of months.
+                </FormHelperText>
+              </Box>
+              <Box>
+                <FormControlLabel
+                  value="permanent"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Permanent</Typography>}
+                  sx={{ mb: 0.5 }}
+                />
+                <FormHelperText sx={{ ml: 4, mt: 0.5, mb: 1.5 }}>
+                  This discount applies for the entire duration of the membership offer.
+                </FormHelperText>
+              </Box>
+              <Box>
+                <FormControlLabel
+                  value="minimum_duration"
+                  control={<Radio />}
+                  label={<Typography variant="body2">Minimum duration</Typography>}
+                  sx={{ mb: 0.5 }}
+                />
+                <FormHelperText sx={{ ml: 4, mt: 0.5 }}>
+                  The minimum duration is defined by the selected membership offer.
+                </FormHelperText>
+              </Box>
             </RadioGroup>
           </FormControl>
 
-          {/* Type */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Type
-          </Typography>
-          <FormControl component="fieldset" sx={{ mb: 3, width: '100%' }}>
-            <RadioGroup
-              value={discount.discountType}
-              onChange={(e) =>
-                updateModuleDiscount(discount.id, 'discountType', e.target.value)
-              }
-            >
-              <FormControlLabel
-                value="substitute_price"
-                control={<Radio />}
-                label={<Typography variant="body2">Substitute price</Typography>}
-              />
-              <FormControlLabel
-                value="percentage"
-                control={<Radio />}
-                label={<Typography variant="body2">Percentage</Typography>}
-              />
-              <FormControlLabel
-                value="absolute_price"
-                control={<Radio />}
-                label={<Typography variant="body2">Absolute price</Typography>}
-              />
-            </RadioGroup>
-          </FormControl>
-
-          {/* Value */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Value
-          </Typography>
-          <TextField
-            label="Value"
-            type="number"
-            value={discount.value}
-            onChange={(e) => updateModuleDiscount(discount.id, 'value', e.target.value)}
-            size="small"
-            sx={{ mb: 3, width: 200 }}
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ min: 0, step: discount.discountType === 'percentage' ? 1 : 0.01 }}
-          />
+          {/* Type + Value */}
+          {renderTypeAndValue(discount, updateModuleDiscount, moduleValueInputRefs.current[discount.id])}
 
           {/* Facility based price */}
           <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
@@ -1945,8 +2033,9 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               Add facility substitute based price
             </Button>
           </Box>
-        </Paper>
-      ))}
+          </Paper>
+        );
+      })}
 
       <Box sx={{ display: 'flex', gap: 2 }}>
         <Button
@@ -1959,7 +2048,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         </Button>
       </Box>
     </Box>
-  );
+    );
+  };
 
   return (
     <Dialog
