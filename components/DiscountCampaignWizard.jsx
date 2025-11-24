@@ -40,6 +40,12 @@ import CardMembershipRounded from '@mui/icons-material/CardMembershipRounded';
 import AttachMoneyRounded from '@mui/icons-material/AttachMoneyRounded';
 import ExtensionRounded from '@mui/icons-material/ExtensionRounded';
 import TranslateRounded from '@mui/icons-material/TranslateRounded';
+import CollapsibleBlock from './CollapsibleBlock';
+import {
+  buildMembershipDiscountSummary,
+  buildFlatFeeDiscountSummary,
+  buildModuleDiscountSummary,
+} from './utils/discountSummary';
 
 // Simple i18n helper - marks fields as translatable
 const t = (key, defaultValue) => {
@@ -70,7 +76,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   // Voucher Logic - Priority
   const [voucherPriority, setVoucherPriority] = useState('vouchers_first');
 
-  // Source
+  // Contract sources
   const [sources, setSources] = useState([]);
 
   // Membership Fee Discounts
@@ -81,6 +87,11 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
 
   // Module Discounts
   const [moduleDiscounts, setModuleDiscounts] = useState([]);
+
+  // Expanded state for collapsible blocks
+  const [expandedMembershipDiscounts, setExpandedMembershipDiscounts] = useState({});
+  const [expandedFlatFeeDiscounts, setExpandedFlatFeeDiscounts] = useState({});
+  const [expandedModuleDiscounts, setExpandedModuleDiscounts] = useState({});
 
   // Refs for value inputs - must be at top level to avoid hook order issues
   const membershipValueInputRefs = useRef({});
@@ -223,10 +234,11 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const addMembershipDiscount = () => {
+    const newId = Date.now();
     setMembershipDiscounts([
       ...membershipDiscounts,
       {
-        id: Date.now(),
+        id: newId,
         membershipOfferId: 'All',
         selectedTerm: 'All',
         selectedFrequency: 'All',
@@ -242,6 +254,10 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         starterPackageFacilities: [],
       },
     ]);
+    // Set the first discount as expanded by default
+    if (membershipDiscounts.length === 0) {
+      setExpandedMembershipDiscounts({ [newId]: true });
+    }
   };
 
   const updateMembershipDiscount = (id, field, value) => {
@@ -343,10 +359,11 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const addFlatFeeDiscount = () => {
+    const newId = Date.now();
     setFlatFeeDiscounts([
       ...flatFeeDiscounts,
       {
-        id: Date.now(),
+        id: newId,
         membershipOfferId: 'All',
         selectedTerm: 'All',
         selectedFrequency: 'All',
@@ -360,6 +377,10 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         facilityPrices: [],
       },
     ]);
+    // Set the first discount as expanded by default
+    if (flatFeeDiscounts.length === 0) {
+      setExpandedFlatFeeDiscounts({ [newId]: true });
+    }
   };
 
   const updateFlatFeeDiscount = (id, field, value) => {
@@ -417,10 +438,11 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const addModuleDiscount = () => {
+    const newId = Date.now();
     setModuleDiscounts([
       ...moduleDiscounts,
       {
-        id: Date.now(),
+        id: newId,
         membershipOfferId: 'All',
         selectedTerm: 'All',
         selectedFrequency: 'All',
@@ -434,6 +456,10 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         facilityPrices: [],
       },
     ]);
+    // Set the first discount as expanded by default
+    if (moduleDiscounts.length === 0) {
+      setExpandedModuleDiscounts({ [newId]: true });
+    }
   };
 
   const updateModuleDiscount = (id, field, value) => {
@@ -497,6 +523,13 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
       setEndDate('');
     }
   }, [isAlwaysActive]);
+
+  // Set all sources as selected by default when creating a new campaign
+  useEffect(() => {
+    if (sources.length === 0) {
+      setSources(sourceOptions);
+    }
+  }, []);
 
   // Helper function to get dynamic value input configuration based on discount type
   const getValueInputConfig = (discountType) => {
@@ -802,6 +835,48 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         />
       </Box>
 
+      {/* Contract Sources Section */}
+      <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
+        Contract sources
+      </Typography>
+      
+      <Autocomplete
+        multiple
+        size="small"
+        options={sourceOptions}
+        value={sources}
+        onChange={(event, newValue) => {
+          setSources(newValue);
+        }}
+        renderInput={(params) => (
+          <TextField 
+            {...params} 
+            label="Contract sources"
+            placeholder={sources.length === 0 ? "Search or select sources" : ""}
+          />
+        )}
+        renderOption={(props, option, { selected }) => (
+          <li {...props}>
+            <Checkbox
+              checked={selected}
+              sx={{ mr: 1 }}
+            />
+            <Typography variant="body2">{option}</Typography>
+          </li>
+        )}
+        renderTags={(value, getTagProps) =>
+          value.map((option, index) => (
+            <Chip
+              {...getTagProps({ index })}
+              key={option}
+              label={option}
+              size="small"
+            />
+          ))
+        }
+        sx={{ mb: 4 }}
+      />
+
       {/* Voucher Logic Section */}
       <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
         Voucher logic
@@ -888,36 +963,6 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
           </RadioGroup>
         </FormControl>
       )}
-
-      {/* Source Section */}
-      <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-        Source
-      </Typography>
-      
-      <FormControl fullWidth sx={{ mb: 4 }}>
-        <InputLabel>Source</InputLabel>
-        <Select
-          multiple
-          value={sources}
-          onChange={handleSourceChange}
-          input={<OutlinedInput label="Source" />}
-          renderValue={(selected) => (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-              {selected.map((value) => (
-                <Chip key={value} label={value} size="small" />
-              ))}
-            </Box>
-          )}
-        >
-          {sourceOptions.map((source) => (
-            <MenuItem key={source} value={source}>
-              <Checkbox checked={sources.indexOf(source) > -1} />
-              <Typography variant="body2">{source}</Typography>
-            </MenuItem>
-          ))}
-        </Select>
-        <FormHelperText>Enable discount for the following sources (multiselect)</FormHelperText>
-      </FormControl>
     </Box>
   );
 
@@ -949,22 +994,19 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
           }
           
           return (
-            <Paper
+            <CollapsibleBlock
               key={discount.id}
-              sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
+              title={`Membership Fee Discount ${index + 1}`}
+              summary={buildMembershipDiscountSummary(discount)}
+              expanded={expandedMembershipDiscounts[discount.id] || false}
+              onToggle={() => {
+                setExpandedMembershipDiscounts(prev => ({
+                  ...prev,
+                  [discount.id]: !prev[discount.id]
+                }));
+              }}
+              onDelete={() => deleteMembershipDiscount(discount.id)}
             >
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
-              Membership Fee Discount {index + 1}
-            </Typography>
-            <IconButton
-              size="small"
-              onClick={() => deleteMembershipDiscount(discount.id)}
-              sx={{ color: 'error.main' }}
-            >
-              <DeleteRounded />
-            </IconButton>
-          </Box>
 
           {/* Membership offer, Term, Payment frequency in one row */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -1451,7 +1493,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               </Paper>
             );
           })()}
-            </Paper>
+            </CollapsibleBlock>
           );
         })}
 
@@ -1497,22 +1539,19 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         }
         
         return (
-          <Paper
+          <CollapsibleBlock
             key={discount.id}
-            sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
+            title={`Flat Fee Discount ${index + 1}`}
+            summary={buildFlatFeeDiscountSummary(discount)}
+            expanded={expandedFlatFeeDiscounts[discount.id] || false}
+            onToggle={() => {
+              setExpandedFlatFeeDiscounts(prev => ({
+                ...prev,
+                [discount.id]: !prev[discount.id]
+              }));
+            }}
+            onDelete={() => deleteFlatFeeDiscount(discount.id)}
           >
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
-              Flat Fee Discount {index + 1}
-            </Typography>
-            <IconButton
-              size="small"
-              onClick={() => deleteFlatFeeDiscount(discount.id)}
-              sx={{ color: 'error.main' }}
-            >
-              <DeleteRounded />
-            </IconButton>
-          </Box>
 
           {/* Membership offer, Term, Payment frequency in one row */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -1742,7 +1781,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               Add facility substitute based price
             </Button>
           </Box>
-          </Paper>
+          </CollapsibleBlock>
         );
       })}
 
@@ -1788,22 +1827,19 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         }
         
         return (
-          <Paper
+          <CollapsibleBlock
             key={discount.id}
-            sx={{ p: 3, mb: 3, border: '1px solid #B0BEC5', boxShadow: 'none', borderRadius: 2 }}
+            title={`Module Discount ${index + 1}`}
+            summary={buildModuleDiscountSummary(discount)}
+            expanded={expandedModuleDiscounts[discount.id] || false}
+            onToggle={() => {
+              setExpandedModuleDiscounts(prev => ({
+                ...prev,
+                [discount.id]: !prev[discount.id]
+              }));
+            }}
+            onDelete={() => deleteModuleDiscount(discount.id)}
           >
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
-              Additional Modules Discount {index + 1}
-            </Typography>
-            <IconButton
-              size="small"
-              onClick={() => deleteModuleDiscount(discount.id)}
-              sx={{ color: 'error.main' }}
-            >
-              <DeleteRounded />
-            </IconButton>
-          </Box>
 
           {/* Membership offer, Term, Payment frequency in one row */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -2033,7 +2069,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               Add facility substitute based price
             </Button>
           </Box>
-          </Paper>
+          </CollapsibleBlock>
         );
       })}
 
@@ -2044,7 +2080,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
           onClick={addModuleDiscount}
           sx={{ textTransform: 'none' }}
         >
-          Add a flat fee discount
+          Add a module discount
         </Button>
       </Box>
     </Box>
