@@ -54,6 +54,51 @@ const t = (key, defaultValue) => {
   return defaultValue || key;
 };
 
+// Validation helper for Term/Payment Frequency combination
+const validateTermFrequencyCombination = (term, paymentFrequency) => {
+  // Rule 1: Term = "All" → Payment Frequency must also be "All"
+  if (term === 'All' && paymentFrequency !== 'All') {
+    return {
+      isValid: false,
+      errorMessage: 'When Term is "All", Payment Frequency must also be "All"'
+    };
+  }
+  
+  // Rule 2: Payment Frequency = "All" → Term must also be "All"
+  if (paymentFrequency === 'All' && term !== 'All') {
+    return {
+      isValid: false,
+      errorMessage: 'When Payment Frequency is "All", Term must also be "All"'
+    };
+  }
+  
+  return {
+    isValid: true,
+    errorMessage: null
+  };
+};
+
+// Auto-correct helper for Term/Payment Frequency
+const autoCorrectTermFrequency = (term, paymentFrequency) => {
+  let correctedTerm = term;
+  let correctedPaymentFrequency = paymentFrequency;
+  
+  // If Term = "All", auto-set Payment Frequency = "All"
+  if (term === 'All' && paymentFrequency !== 'All') {
+    correctedPaymentFrequency = 'All';
+  }
+  
+  // If Payment Frequency = "All", auto-set Term = "All"
+  if (paymentFrequency === 'All' && term !== 'All') {
+    correctedTerm = 'All';
+  }
+  
+  return {
+    correctedTerm,
+    correctedPaymentFrequency
+  };
+};
+
 export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   const navigate = useNavigate();
   const { addCampaign } = useDiscountCampaigns();
@@ -71,7 +116,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   const [isAlwaysActive, setIsAlwaysActive] = useState(false);
 
   // Voucher Logic - Stacking Rules
-  const [voucherStackingLogic, setVoucherStackingLogic] = useState('allow_additionally');
+  const [voucherStackingLogic, setVoucherStackingLogic] = useState('disallow');
 
   // Voucher Logic - Priority
   const [voucherPriority, setVoucherPriority] = useState('vouchers_first');
@@ -79,14 +124,22 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   // Contract sources
   const [sources, setSources] = useState([]);
 
-  // Membership Fee Discounts
-  const [membershipDiscounts, setMembershipDiscounts] = useState([]);
+  // Membership Fee Discounts - Draft and Saved states
+  const [draftMembershipDiscounts, setDraftMembershipDiscounts] = useState([]);
+  const [savedMembershipDiscounts, setSavedMembershipDiscounts] = useState([]);
 
-  // Flat Fee Discounts
-  const [flatFeeDiscounts, setFlatFeeDiscounts] = useState([]);
+  // Flat Fee Discounts - Draft and Saved states
+  const [draftFlatFeeDiscounts, setDraftFlatFeeDiscounts] = useState([]);
+  const [savedFlatFeeDiscounts, setSavedFlatFeeDiscounts] = useState([]);
 
-  // Module Discounts
-  const [moduleDiscounts, setModuleDiscounts] = useState([]);
+  // Module Discounts - Draft and Saved states
+  const [draftModuleDiscounts, setDraftModuleDiscounts] = useState([]);
+  const [savedModuleDiscounts, setSavedModuleDiscounts] = useState([]);
+
+  // Validation errors for each discount
+  const [membershipValidationErrors, setMembershipValidationErrors] = useState({});
+  const [flatFeeValidationErrors, setFlatFeeValidationErrors] = useState({});
+  const [moduleValidationErrors, setModuleValidationErrors] = useState({});
 
   // Expanded state for collapsible blocks
   const [expandedMembershipDiscounts, setExpandedMembershipDiscounts] = useState({});
@@ -150,7 +203,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         discountPeriod: isAlwaysActive ? 'Always Active' : (endDate ? `${new Date(startDate).toLocaleDateString('de-DE')} - ${new Date(endDate).toLocaleDateString('de-DE')}` : `${new Date(startDate).toLocaleDateString('de-DE')} - Ongoing`),
         combinationWithVouchers: voucherStackingLogic === 'allow_additionally',
         description: publicDescription || '',
-        membershipDiscounts: membershipDiscounts.map(d => ({
+        membershipDiscounts: savedMembershipDiscounts.map(d => ({
           id: `m${d.id}`,
           membershipOffer: d.membershipOfferId,
           terms: d.selectedTerm,
@@ -177,7 +230,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             }
           })
         })),
-        flatFeeDiscounts: flatFeeDiscounts.map(d => ({
+        flatFeeDiscounts: savedFlatFeeDiscounts.map(d => ({
           id: `f${d.id}`,
           membershipOffer: d.membershipOfferId,
           terms: d.selectedTerm,
@@ -193,7 +246,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             }))
           })
         })),
-        moduleDiscounts: moduleDiscounts.map(d => ({
+        moduleDiscounts: savedModuleDiscounts.map(d => ({
           id: `mod${d.id}`,
           membershipOffer: d.membershipOfferId,
           terms: d.selectedTerm,
@@ -235,40 +288,40 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
 
   const addMembershipDiscount = () => {
     const newId = Date.now();
-    setMembershipDiscounts([
-      ...membershipDiscounts,
-      {
-        id: newId,
-        membershipOfferId: 'All',
-        selectedTerm: 'All',
-        selectedFrequency: 'All',
-        durationType: 'permanent',
-        durationMonths: '',
-        durationMinimum: '',
-        discountType: 'percentage',
-        value: '',
-        facilityPrices: [],
-        starterPackageEnabled: false,
-        starterPackageType: null,
-        starterPackageValue: null,
-        starterPackageFacilities: [],
-      },
-    ]);
-    // Set the first discount as expanded by default
-    if (membershipDiscounts.length === 0) {
-      setExpandedMembershipDiscounts({ [newId]: true });
-    }
+    const newDiscount = {
+      id: newId,
+      membershipOfferId: 'All',
+      selectedTerm: 'All',
+      selectedFrequency: 'All',
+      durationType: 'permanent',
+      durationMonths: '',
+      durationMinimum: '',
+      discountType: 'percentage',
+      value: '',
+      facilityPrices: [],
+      starterPackageEnabled: false,
+      starterPackageType: null,
+      starterPackageValue: null,
+      starterPackageFacilities: [],
+    };
+    setDraftMembershipDiscounts([...draftMembershipDiscounts, newDiscount]);
+    setSavedMembershipDiscounts([...savedMembershipDiscounts, newDiscount]);
+    // Always expand newly added discount
+    setExpandedMembershipDiscounts(prev => ({
+      ...prev,
+      [newId]: true
+    }));
   };
 
   const updateMembershipDiscount = (id, field, value) => {
-    setMembershipDiscounts(prevDiscounts =>
+    setDraftMembershipDiscounts(prevDiscounts =>
       prevDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
     );
   };
 
   const addFacilityPrice = (discountId) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) =>
+    setDraftMembershipDiscounts(
+      draftMembershipDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -283,8 +336,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const updateFacilityPrice = (discountId, facilityId, field, value) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) =>
+    setDraftMembershipDiscounts(
+      draftMembershipDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -298,8 +351,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteFacilityPrice = (discountId, facilityId) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) =>
+    setDraftMembershipDiscounts(
+      draftMembershipDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -311,12 +364,18 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteMembershipDiscount = (id) => {
-    setMembershipDiscounts(membershipDiscounts.filter((d) => d.id !== id));
+    setDraftMembershipDiscounts(draftMembershipDiscounts.filter((d) => d.id !== id));
+    setSavedMembershipDiscounts(savedMembershipDiscounts.filter((d) => d.id !== id));
+    setMembershipValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
   };
 
   const addStarterPackageFacilityPrice = (discountId) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) =>
+    setDraftMembershipDiscounts(
+      draftMembershipDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -331,8 +390,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const updateStarterPackageFacilityPrice = (discountId, facilityId, field, value) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) =>
+    setDraftMembershipDiscounts(
+      draftMembershipDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -346,8 +405,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteStarterPackageFacilityPrice = (discountId, facilityId) => {
-    setMembershipDiscounts(
-      membershipDiscounts.map((d) =>
+    setDraftMembershipDiscounts(
+      draftMembershipDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -360,38 +419,38 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
 
   const addFlatFeeDiscount = () => {
     const newId = Date.now();
-    setFlatFeeDiscounts([
-      ...flatFeeDiscounts,
-      {
-        id: newId,
-        membershipOfferId: 'All',
-        selectedTerm: 'All',
-        selectedFrequency: 'All',
-        selectedFlatFee: 'All',
-        flatFeeType: 'one_time',
-        durationType: 'permanent',
-        durationMonths: '',
-        durationMinimum: '',
-        discountType: 'percentage',
-        value: '',
-        facilityPrices: [],
-      },
-    ]);
-    // Set the first discount as expanded by default
-    if (flatFeeDiscounts.length === 0) {
-      setExpandedFlatFeeDiscounts({ [newId]: true });
-    }
+    const newDiscount = {
+      id: newId,
+      membershipOfferId: 'All',
+      selectedTerm: 'All',
+      selectedFrequency: 'All',
+      selectedFlatFee: 'All',
+      flatFeeType: 'one_time',
+      durationType: 'permanent',
+      durationMonths: '',
+      durationMinimum: '',
+      discountType: 'percentage',
+      value: '',
+      facilityPrices: [],
+    };
+    setDraftFlatFeeDiscounts([...draftFlatFeeDiscounts, newDiscount]);
+    setSavedFlatFeeDiscounts([...savedFlatFeeDiscounts, newDiscount]);
+    // Always expand newly added discount
+    setExpandedFlatFeeDiscounts(prev => ({
+      ...prev,
+      [newId]: true
+    }));
   };
 
   const updateFlatFeeDiscount = (id, field, value) => {
-    setFlatFeeDiscounts(prevDiscounts =>
+    setDraftFlatFeeDiscounts(prevDiscounts =>
       prevDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
     );
   };
 
   const addFlatFeeFacilityPrice = (discountId) => {
-    setFlatFeeDiscounts(
-      flatFeeDiscounts.map((d) =>
+    setDraftFlatFeeDiscounts(
+      draftFlatFeeDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -406,8 +465,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const updateFlatFeeFacilityPrice = (discountId, facilityId, field, value) => {
-    setFlatFeeDiscounts(
-      flatFeeDiscounts.map((d) =>
+    setDraftFlatFeeDiscounts(
+      draftFlatFeeDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -421,8 +480,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteFlatFeeFacilityPrice = (discountId, facilityId) => {
-    setFlatFeeDiscounts(
-      flatFeeDiscounts.map((d) =>
+    setDraftFlatFeeDiscounts(
+      draftFlatFeeDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -434,43 +493,49 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteFlatFeeDiscount = (id) => {
-    setFlatFeeDiscounts(flatFeeDiscounts.filter((d) => d.id !== id));
+    setDraftFlatFeeDiscounts(draftFlatFeeDiscounts.filter((d) => d.id !== id));
+    setSavedFlatFeeDiscounts(savedFlatFeeDiscounts.filter((d) => d.id !== id));
+    setFlatFeeValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
   };
 
   const addModuleDiscount = () => {
     const newId = Date.now();
-    setModuleDiscounts([
-      ...moduleDiscounts,
-      {
-        id: newId,
-        membershipOfferId: 'All',
-        selectedTerm: 'All',
-        selectedFrequency: 'All',
-        selectedModule: 'All',
-        moduleType: 'one_time',
-        durationType: 'permanent',
-        durationMonths: '',
-        durationMinimum: '',
-        discountType: 'percentage',
-        value: '',
-        facilityPrices: [],
-      },
-    ]);
-    // Set the first discount as expanded by default
-    if (moduleDiscounts.length === 0) {
-      setExpandedModuleDiscounts({ [newId]: true });
-    }
+    const newDiscount = {
+      id: newId,
+      membershipOfferId: 'All',
+      selectedTerm: 'All',
+      selectedFrequency: 'All',
+      selectedModule: 'All',
+      moduleType: 'one_time',
+      durationType: 'permanent',
+      durationMonths: '',
+      durationMinimum: '',
+      discountType: 'percentage',
+      value: '',
+      facilityPrices: [],
+    };
+    setDraftModuleDiscounts([...draftModuleDiscounts, newDiscount]);
+    setSavedModuleDiscounts([...savedModuleDiscounts, newDiscount]);
+    // Always expand newly added discount
+    setExpandedModuleDiscounts(prev => ({
+      ...prev,
+      [newId]: true
+    }));
   };
 
   const updateModuleDiscount = (id, field, value) => {
-    setModuleDiscounts(prevDiscounts =>
+    setDraftModuleDiscounts(prevDiscounts =>
       prevDiscounts.map((d) => (d.id === id ? { ...d, [field]: value } : d))
     );
   };
 
   const addModuleFacilityPrice = (discountId) => {
-    setModuleDiscounts(
-      moduleDiscounts.map((d) =>
+    setDraftModuleDiscounts(
+      draftModuleDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -485,8 +550,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const updateModuleFacilityPrice = (discountId, facilityId, field, value) => {
-    setModuleDiscounts(
-      moduleDiscounts.map((d) =>
+    setDraftModuleDiscounts(
+      draftModuleDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -500,8 +565,8 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteModuleFacilityPrice = (discountId, facilityId) => {
-    setModuleDiscounts(
-      moduleDiscounts.map((d) =>
+    setDraftModuleDiscounts(
+      draftModuleDiscounts.map((d) =>
         d.id === discountId
           ? {
               ...d,
@@ -513,7 +578,13 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   };
 
   const deleteModuleDiscount = (id) => {
-    setModuleDiscounts(moduleDiscounts.filter((d) => d.id !== id));
+    setDraftModuleDiscounts(draftModuleDiscounts.filter((d) => d.id !== id));
+    setSavedModuleDiscounts(savedModuleDiscounts.filter((d) => d.id !== id));
+    setModuleValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
   };
 
   // Clear both dates when always active campaign is enabled
@@ -577,7 +648,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
     }
   };
 
-  // Reusable Type + Value component
+  // Reusable Type + Value component (for flat fee and module discounts)
   const renderTypeAndValue = (discount, updateFunction, valueInputRef) => {
     const valueConfig = getValueInputConfig(discount.discountType);
     const isValueEnabled = Boolean(discount.discountType);
@@ -969,7 +1040,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   const renderMembershipFeeDiscounts = () => {
     return (
       <Box>
-        {membershipDiscounts.length === 0 && (
+        {draftMembershipDiscounts.length === 0 && (
           <Box
             sx={{
               py: 6,
@@ -987,7 +1058,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
           </Box>
         )}
 
-        {membershipDiscounts.map((discount, index) => {
+        {draftMembershipDiscounts.map((discount, index) => {
           // Initialize ref for this discount if it doesn't exist
           if (!membershipValueInputRefs.current[discount.id]) {
             membershipValueInputRefs.current[discount.id] = React.createRef();
@@ -997,7 +1068,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             <CollapsibleBlock
               key={discount.id}
               title={`Membership Fee Discount ${index + 1}`}
-              summary={buildMembershipDiscountSummary(discount)}
+              summary={buildMembershipDiscountSummary(savedMembershipDiscounts.find(d => d.id === discount.id) || discount)}
               expanded={expandedMembershipDiscounts[discount.id] || false}
               onToggle={() => {
                 setExpandedMembershipDiscounts(prev => ({
@@ -1006,6 +1077,9 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                 }));
               }}
               onDelete={() => deleteMembershipDiscount(discount.id)}
+              showFooterActions={true}
+              onSave={() => handleSaveMembershipDiscount(discount.id)}
+              onDiscard={() => handleDiscardMembershipDiscount(discount.id)}
             >
 
           {/* Membership offer, Term, Payment frequency in one row */}
@@ -1046,7 +1120,31 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                     options={terms}
                     value={discount.selectedTerm}
                     onChange={(event, newValue) => {
-                      updateMembershipDiscount(discount.id, 'selectedTerm', newValue || '');
+                      const newTerm = newValue || '';
+                      updateMembershipDiscount(discount.id, 'selectedTerm', newTerm);
+                      
+                      // Auto-correct: if Term = "All", set Payment Frequency = "All"
+                      if (newTerm === 'All') {
+                        updateMembershipDiscount(discount.id, 'selectedFrequency', 'All');
+                      }
+                      
+                      // Clear validation errors for Term/Frequency when combination becomes valid
+                      const corrected = autoCorrectTermFrequency(newTerm, discount.selectedFrequency);
+                      const validation = validateTermFrequencyCombination(corrected.correctedTerm, corrected.correctedPaymentFrequency);
+                      if (validation.isValid) {
+                        setMembershipValidationErrors(prev => {
+                          const newErrors = { ...prev };
+                          if (newErrors[discount.id]) {
+                            delete newErrors[discount.id].selectedTerm;
+                            delete newErrors[discount.id].selectedFrequency;
+                            delete newErrors[discount.id].termFrequencyCombination;
+                            if (Object.keys(newErrors[discount.id]).length === 0) {
+                              delete newErrors[discount.id];
+                            }
+                          }
+                          return newErrors;
+                        });
+                      }
                     }}
                     renderInput={(params) => <TextField {...params} label="Term" />}
                     fullWidth
@@ -1073,7 +1171,31 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
                     options={paymentFrequencies}
                     value={discount.selectedFrequency}
                     onChange={(event, newValue) => {
-                      updateMembershipDiscount(discount.id, 'selectedFrequency', newValue || '');
+                      const newFrequency = newValue || '';
+                      updateMembershipDiscount(discount.id, 'selectedFrequency', newFrequency);
+                      
+                      // Auto-correct: if Payment Frequency = "All", set Term = "All"
+                      if (newFrequency === 'All') {
+                        updateMembershipDiscount(discount.id, 'selectedTerm', 'All');
+                      }
+                      
+                      // Clear validation errors for Term/Frequency when combination becomes valid
+                      const corrected = autoCorrectTermFrequency(discount.selectedTerm, newFrequency);
+                      const validation = validateTermFrequencyCombination(corrected.correctedTerm, corrected.correctedPaymentFrequency);
+                      if (validation.isValid) {
+                        setMembershipValidationErrors(prev => {
+                          const newErrors = { ...prev };
+                          if (newErrors[discount.id]) {
+                            delete newErrors[discount.id].selectedTerm;
+                            delete newErrors[discount.id].selectedFrequency;
+                            delete newErrors[discount.id].termFrequencyCombination;
+                            if (Object.keys(newErrors[discount.id]).length === 0) {
+                              delete newErrors[discount.id];
+                            }
+                          }
+                          return newErrors;
+                        });
+                      }
                     }}
                     renderInput={(params) => <TextField {...params} label="Payment frequency" />}
                     fullWidth
@@ -1156,70 +1278,221 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
             </RadioGroup>
           </FormControl>
 
-          {/* Type + Value */}
-          {renderTypeAndValue(discount, updateMembershipDiscount, membershipValueInputRefs.current[discount.id])}
-
-          {/* Facility based price */}
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
-            Facility based price
-          </Typography>
-          <Box sx={{ mb: 3 }}>
-            {discount.facilityPrices.map((facilityPrice) => (
-              <Box
-                key={facilityPrice.id}
-                sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'flex-start' }}
-              >
-                <FormControl sx={{ flex: 1 }} size="small">
-                  <InputLabel>Facility</InputLabel>
-                  <Select
-                    label="Facility"
-                    value={facilityPrice.facility}
-                    onChange={(e) =>
-                      updateFacilityPrice(
-                        discount.id,
-                        facilityPrice.id,
-                        'facility',
-                        e.target.value
-                      )
-                    }
+          {/* Type + Value with Facility based price */}
+          <Paper
+            sx={{
+              p: 3,
+              mb: 3,
+              border: '1px solid',
+              borderColor: 'neutral.200',
+              borderRadius: 2,
+              backgroundColor: 'background.paper',
+            }}
+          >
+            <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
+              Type + Value
+            </Typography>
+            
+            <Grid container spacing={3} sx={{ mb: 4 }}>
+              {/* Type Column */}
+              <Grid item xs={6}>
+                <FormControl component="fieldset" sx={{ width: '100%' }}>
+                  <FormLabel 
+                    component="legend" 
+                    sx={{ 
+                      mb: 1.5, 
+                      fontSize: 14, 
+                      fontWeight: 500, 
+                      color: 'text.primary' 
+                    }}
                   >
-                    {facilities.map((facility) => (
-                      <MenuItem key={facility} value={facility}>
-                        {facility}
-                      </MenuItem>
-                    ))}
-                  </Select>
+                    Discount type
+                  </FormLabel>
+                  <RadioGroup
+                    value={discount.discountType}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      updateMembershipDiscount(discount.id, 'discountType', newType);
+                      // Clear value when changing type
+                      updateMembershipDiscount(discount.id, 'value', '');
+                      // Auto-focus value input after type selection
+                      setTimeout(() => {
+                        if (membershipValueInputRefs.current[discount.id] && membershipValueInputRefs.current[discount.id].current) {
+                          membershipValueInputRefs.current[discount.id].current.focus();
+                        }
+                      }, 100);
+                    }}
+                  >
+                    <FormControlLabel
+                      value="substitute_price"
+                      control={<Radio />}
+                      label={<Typography variant="body2">Substitute price</Typography>}
+                    />
+                    <FormControlLabel
+                      value="percentage"
+                      control={<Radio />}
+                      label={<Typography variant="body2">Percentage</Typography>}
+                    />
+                    <FormControlLabel
+                      value="absolute_price"
+                      control={<Radio />}
+                      label={<Typography variant="body2">Absolute price</Typography>}
+                    />
+                  </RadioGroup>
                 </FormControl>
-                <TextField
-                  label="Value"
-                  type="number"
-                  value={facilityPrice.value}
-                  onChange={(e) =>
-                    updateFacilityPrice(discount.id, facilityPrice.id, 'value', e.target.value)
-                  }
-                  size="small"
-                  sx={{ flex: 1 }}
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ min: 0, step: 0.01 }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => deleteFacilityPrice(discount.id, facilityPrice.id)}
-                  sx={{ color: 'error.main', mt: 0.5 }}
+              </Grid>
+
+              {/* Value Column */}
+              <Grid item xs={6}>
+                {(() => {
+                  const valueConfig = getValueInputConfig(discount.discountType);
+                  const isValueEnabled = Boolean(discount.discountType);
+                  
+                  // Validate value based on type
+                  const validateValue = (value) => {
+                    if (!value || value === '') return '';
+                    const numValue = parseFloat(value);
+                    
+                    if (discount.discountType === 'percentage') {
+                      if (numValue < 1 || numValue > 100) {
+                        return 'Value must be between 1 and 100';
+                      }
+                    } else if (discount.discountType === 'absolute_price' || discount.discountType === 'substitute_price') {
+                      if (numValue <= 0) {
+                        return 'Value must be greater than 0';
+                      }
+                    }
+                    return '';
+                  };
+                  
+                  const errorMessage = validateValue(discount.value);
+
+                  return (
+                    <FormControl fullWidth>
+                      <FormLabel 
+                        component="legend" 
+                        sx={{ 
+                          mb: 1.5, 
+                          fontSize: 14, 
+                          fontWeight: 500, 
+                          color: isValueEnabled ? 'text.primary' : 'text.disabled'
+                        }}
+                      >
+                        {valueConfig.label}
+                      </FormLabel>
+                      <TextField
+                        inputRef={membershipValueInputRefs.current[discount.id]}
+                        placeholder={valueConfig.placeholder}
+                        type="number"
+                        value={discount.value}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          updateMembershipDiscount(discount.id, 'value', value);
+                        }}
+                        size="small"
+                        disabled={!isValueEnabled}
+                        error={Boolean(errorMessage && discount.value)}
+                        helperText={
+                          errorMessage && discount.value
+                            ? errorMessage
+                            : isValueEnabled
+                            ? valueConfig.helperText
+                            : 'Select a discount type first'
+                        }
+                        InputLabelProps={{ shrink: true }}
+                        InputProps={{
+                          endAdornment: valueConfig.suffix && isValueEnabled ? (
+                            <Typography
+                              variant="body2"
+                              sx={{ 
+                                color: 'text.secondary',
+                                ml: 1,
+                                userSelect: 'none'
+                              }}
+                            >
+                              {valueConfig.suffix}
+                            </Typography>
+                          ) : null,
+                        }}
+                        inputProps={{
+                          min: valueConfig.min,
+                          max: valueConfig.max,
+                          step: valueConfig.step,
+                        }}
+                        sx={{
+                          '& .MuiInputBase-root': {
+                            backgroundColor: isValueEnabled ? 'background.paper' : 'action.disabledBackground',
+                          },
+                        }}
+                      />
+                    </FormControl>
+                  );
+                })()}
+              </Grid>
+            </Grid>
+
+            {/* Facility based price */}
+            <Typography variant="h6" sx={{ mb: 2, fontWeight: 500 }}>
+              Facility based price
+            </Typography>
+            <Box>
+              {discount.facilityPrices.map((facilityPrice) => (
+                <Box
+                  key={facilityPrice.id}
+                  sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'flex-start' }}
                 >
-                  <DeleteRounded />
-                </IconButton>
-              </Box>
-            ))}
-            <Button
-              variant="outlined"
-              startIcon={<AddRounded />}
-              onClick={() => addFacilityPrice(discount.id)}
-              sx={{ textTransform: 'none' }}
-            >
-              Add facility substitute based price
-            </Button>
-          </Box>
+                  <FormControl sx={{ flex: 1 }} size="small">
+                    <InputLabel>Facility</InputLabel>
+                    <Select
+                      label="Facility"
+                      value={facilityPrice.facility}
+                      onChange={(e) =>
+                        updateFacilityPrice(
+                          discount.id,
+                          facilityPrice.id,
+                          'facility',
+                          e.target.value
+                        )
+                      }
+                    >
+                      {facilities.map((facility) => (
+                        <MenuItem key={facility} value={facility}>
+                          {facility}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <TextField
+                    label="Value"
+                    type="number"
+                    value={facilityPrice.value}
+                    onChange={(e) =>
+                      updateFacilityPrice(discount.id, facilityPrice.id, 'value', e.target.value)
+                    }
+                    size="small"
+                    sx={{ flex: 1 }}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ min: 0, step: 0.01 }}
+                  />
+                  <IconButton
+                    size="small"
+                    onClick={() => deleteFacilityPrice(discount.id, facilityPrice.id)}
+                    sx={{ color: 'error.main', mt: 0.5 }}
+                  >
+                    <DeleteRounded />
+                  </IconButton>
+                </Box>
+              ))}
+              <Button
+                variant="outlined"
+                startIcon={<AddRounded />}
+                onClick={() => addFacilityPrice(discount.id)}
+                sx={{ textTransform: 'none' }}
+              >
+                Add facility substitute based price
+              </Button>
+            </Box>
+          </Paper>
 
           {/* Starter package */}
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
@@ -1511,10 +1784,340 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
     );
   };
 
+  // Validation functions
+  const validateMembershipDiscount = (discount) => {
+    const errors = {};
+    
+    // membershipOfferId required
+    if (!discount.membershipOfferId) {
+      errors.membershipOfferId = 'Membership offer is required';
+    }
+    
+    // term required
+    if (!discount.selectedTerm) {
+      errors.selectedTerm = 'Term is required';
+    }
+    
+    // paymentFrequency required
+    if (!discount.selectedFrequency) {
+      errors.selectedFrequency = 'Payment frequency is required';
+    }
+    
+    // Validate Term/Payment Frequency combination
+    if (discount.selectedTerm && discount.selectedFrequency) {
+      const termFreqValidation = validateTermFrequencyCombination(
+        discount.selectedTerm,
+        discount.selectedFrequency
+      );
+      if (!termFreqValidation.isValid) {
+        errors.termFrequencyCombination = termFreqValidation.errorMessage;
+      }
+    }
+    
+    // duration rules
+    if (discount.durationType === 'months') {
+      if (!discount.durationMonths || Number(discount.durationMonths) <= 0) {
+        errors.durationMonths = 'Number of months must be greater than 0';
+      }
+    }
+    
+    // discount type required
+    if (!discount.discountType) {
+      errors.discountType = 'Discount type is required';
+    }
+    
+    // discount value validation
+    if (!discount.value || discount.value === '') {
+      errors.value = 'Discount value is required';
+    } else {
+      const numValue = parseFloat(discount.value);
+      if (discount.discountType === 'percentage') {
+        if (numValue < 1 || numValue > 100) {
+          errors.value = 'Percentage must be between 1 and 100';
+        }
+      } else if (discount.discountType === 'substitute_price' || discount.discountType === 'absolute_price') {
+        if (numValue < 0) {
+          errors.value = 'Value must be greater than or equal to 0';
+        }
+      }
+    }
+    
+    return {
+      isValid: Object.keys(errors).length === 0,
+      errors
+    };
+  };
+
+  const validateFlatFeeDiscount = (discount) => {
+    const errors = {};
+    
+    // feeId required
+    if (!discount.selectedFlatFee) {
+      errors.selectedFlatFee = 'Flat fee type is required';
+    }
+    
+    // duration rules (same as membership)
+    if (discount.durationType === 'months') {
+      if (!discount.durationMonths || Number(discount.durationMonths) <= 0) {
+        errors.durationMonths = 'Number of months must be greater than 0';
+      }
+    }
+    
+    // discount type required
+    if (!discount.discountType) {
+      errors.discountType = 'Discount type is required';
+    }
+    
+    // discount value validation (same as membership)
+    if (!discount.value || discount.value === '') {
+      errors.value = 'Discount value is required';
+    } else {
+      const numValue = parseFloat(discount.value);
+      if (discount.discountType === 'percentage') {
+        if (numValue < 1 || numValue > 100) {
+          errors.value = 'Percentage must be between 1 and 100';
+        }
+      } else if (discount.discountType === 'substitute_price' || discount.discountType === 'absolute_price') {
+        if (numValue < 0) {
+          errors.value = 'Value must be greater than or equal to 0';
+        }
+      }
+    }
+    
+    return {
+      isValid: Object.keys(errors).length === 0,
+      errors
+    };
+  };
+
+  const validateModuleDiscount = (discount) => {
+    const errors = {};
+    
+    // moduleId required
+    if (!discount.selectedModule) {
+      errors.selectedModule = 'Module type is required';
+    }
+    
+    // duration rules (same as membership, if present)
+    if (discount.durationType === 'months') {
+      if (!discount.durationMonths || Number(discount.durationMonths) <= 0) {
+        errors.durationMonths = 'Number of months must be greater than 0';
+      }
+    }
+    
+    // discount type required
+    if (!discount.discountType) {
+      errors.discountType = 'Discount type is required';
+    }
+    
+    // discount value validation (same as membership)
+    if (!discount.value || discount.value === '') {
+      errors.value = 'Discount value is required';
+    } else {
+      const numValue = parseFloat(discount.value);
+      if (discount.discountType === 'percentage') {
+        if (numValue < 1 || numValue > 100) {
+          errors.value = 'Percentage must be between 1 and 100';
+        }
+      } else if (discount.discountType === 'substitute_price' || discount.discountType === 'absolute_price') {
+        if (numValue < 0) {
+          errors.value = 'Value must be greater than or equal to 0';
+        }
+      }
+    }
+    
+    return {
+      isValid: Object.keys(errors).length === 0,
+      errors
+    };
+  };
+
+  // SAVE handlers
+  const handleSaveMembershipDiscount = (id) => {
+    const discount = draftMembershipDiscounts.find(d => d.id === id);
+    if (!discount) return;
+    
+    const validation = validateMembershipDiscount(discount);
+    
+    if (!validation.isValid) {
+      // Set error state
+      setMembershipValidationErrors(prev => ({
+        ...prev,
+        [id]: validation.errors
+      }));
+      // Keep section expanded
+      setExpandedMembershipDiscounts(prev => ({
+        ...prev,
+        [id]: true
+      }));
+      return;
+    }
+    
+    // Valid - clear errors, save, and collapse
+    setMembershipValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
+    
+    setSavedMembershipDiscounts(prevSaved =>
+      prevSaved.map(d => d.id === id ? { ...discount } : d)
+    );
+    
+    setExpandedMembershipDiscounts(prev => ({
+      ...prev,
+      [id]: false
+    }));
+  };
+
+  const handleSaveFlatFeeDiscount = (id) => {
+    const discount = draftFlatFeeDiscounts.find(d => d.id === id);
+    if (!discount) return;
+    
+    const validation = validateFlatFeeDiscount(discount);
+    
+    if (!validation.isValid) {
+      // Set error state
+      setFlatFeeValidationErrors(prev => ({
+        ...prev,
+        [id]: validation.errors
+      }));
+      // Keep section expanded
+      setExpandedFlatFeeDiscounts(prev => ({
+        ...prev,
+        [id]: true
+      }));
+      return;
+    }
+    
+    // Valid - clear errors, save, and collapse
+    setFlatFeeValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
+    
+    setSavedFlatFeeDiscounts(prevSaved =>
+      prevSaved.map(d => d.id === id ? { ...discount } : d)
+    );
+    
+    setExpandedFlatFeeDiscounts(prev => ({
+      ...prev,
+      [id]: false
+    }));
+  };
+
+  const handleSaveModuleDiscount = (id) => {
+    const discount = draftModuleDiscounts.find(d => d.id === id);
+    if (!discount) return;
+    
+    const validation = validateModuleDiscount(discount);
+    
+    if (!validation.isValid) {
+      // Set error state
+      setModuleValidationErrors(prev => ({
+        ...prev,
+        [id]: validation.errors
+      }));
+      // Keep section expanded
+      setExpandedModuleDiscounts(prev => ({
+        ...prev,
+        [id]: true
+      }));
+      return;
+    }
+    
+    // Valid - clear errors, save, and collapse
+    setModuleValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
+    
+    setSavedModuleDiscounts(prevSaved =>
+      prevSaved.map(d => d.id === id ? { ...discount } : d)
+    );
+    
+    setExpandedModuleDiscounts(prev => ({
+      ...prev,
+      [id]: false
+    }));
+  };
+
+  // DISCARD handlers
+  const handleDiscardMembershipDiscount = (id) => {
+    const savedDiscount = savedMembershipDiscounts.find(d => d.id === id);
+    if (!savedDiscount) return;
+    
+    // Restore draft from saved (deep copy)
+    setDraftMembershipDiscounts(prevDraft =>
+      prevDraft.map(d => d.id === id ? JSON.parse(JSON.stringify(savedDiscount)) : d)
+    );
+    
+    // Clear errors
+    setMembershipValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
+    
+    // Collapse block
+    setExpandedMembershipDiscounts(prev => ({
+      ...prev,
+      [id]: false
+    }));
+  };
+
+  const handleDiscardFlatFeeDiscount = (id) => {
+    const savedDiscount = savedFlatFeeDiscounts.find(d => d.id === id);
+    if (!savedDiscount) return;
+    
+    // Restore draft from saved (deep copy)
+    setDraftFlatFeeDiscounts(prevDraft =>
+      prevDraft.map(d => d.id === id ? JSON.parse(JSON.stringify(savedDiscount)) : d)
+    );
+    
+    // Clear errors
+    setFlatFeeValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
+    
+    // Collapse block
+    setExpandedFlatFeeDiscounts(prev => ({
+      ...prev,
+      [id]: false
+    }));
+  };
+
+  const handleDiscardModuleDiscount = (id) => {
+    const savedDiscount = savedModuleDiscounts.find(d => d.id === id);
+    if (!savedDiscount) return;
+    
+    // Restore draft from saved (deep copy)
+    setDraftModuleDiscounts(prevDraft =>
+      prevDraft.map(d => d.id === id ? JSON.parse(JSON.stringify(savedDiscount)) : d)
+    );
+    
+    // Clear errors
+    setModuleValidationErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[id];
+      return newErrors;
+    });
+    
+    // Collapse block
+    setExpandedModuleDiscounts(prev => ({
+      ...prev,
+      [id]: false
+    }));
+  };
+
   const renderFlatFeeDiscounts = () => {
     return (
       <Box>
-        {flatFeeDiscounts.length === 0 && (
+        {draftFlatFeeDiscounts.length === 0 && (
         <Box
           sx={{
             py: 6,
@@ -1532,7 +2135,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         </Box>
       )}
 
-      {flatFeeDiscounts.map((discount, index) => {
+      {draftFlatFeeDiscounts.map((discount, index) => {
         // Initialize ref for this discount if it doesn't exist
         if (!flatFeeValueInputRefs.current[discount.id]) {
           flatFeeValueInputRefs.current[discount.id] = React.createRef();
@@ -1542,7 +2145,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
           <CollapsibleBlock
             key={discount.id}
             title={`Flat Fee Discount ${index + 1}`}
-            summary={buildFlatFeeDiscountSummary(discount)}
+            summary={buildFlatFeeDiscountSummary(savedFlatFeeDiscounts.find(d => d.id === discount.id) || discount)}
             expanded={expandedFlatFeeDiscounts[discount.id] || false}
             onToggle={() => {
               setExpandedFlatFeeDiscounts(prev => ({
@@ -1551,6 +2154,9 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               }));
             }}
             onDelete={() => deleteFlatFeeDiscount(discount.id)}
+            showFooterActions={true}
+            onSave={() => handleSaveFlatFeeDiscount(discount.id)}
+            onDiscard={() => handleDiscardFlatFeeDiscount(discount.id)}
           >
 
           {/* Membership offer, Term, Payment frequency in one row */}
@@ -1802,7 +2408,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
   const renderModuleDiscounts = () => {
     return (
       <Box>
-        {moduleDiscounts.length === 0 && (
+        {draftModuleDiscounts.length === 0 && (
         <Box
           sx={{
             py: 6,
@@ -1820,7 +2426,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
         </Box>
       )}
 
-      {moduleDiscounts.map((discount, index) => {
+      {draftModuleDiscounts.map((discount, index) => {
         // Initialize ref for this discount if it doesn't exist
         if (!moduleValueInputRefs.current[discount.id]) {
           moduleValueInputRefs.current[discount.id] = React.createRef();
@@ -1830,7 +2436,7 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
           <CollapsibleBlock
             key={discount.id}
             title={`Module Discount ${index + 1}`}
-            summary={buildModuleDiscountSummary(discount)}
+            summary={buildModuleDiscountSummary(savedModuleDiscounts.find(d => d.id === discount.id) || discount)}
             expanded={expandedModuleDiscounts[discount.id] || false}
             onToggle={() => {
               setExpandedModuleDiscounts(prev => ({
@@ -1839,6 +2445,9 @@ export default function DiscountCampaignWizard({ open, onCancel, onComplete }) {
               }));
             }}
             onDelete={() => deleteModuleDiscount(discount.id)}
+            showFooterActions={true}
+            onSave={() => handleSaveModuleDiscount(discount.id)}
+            onDiscard={() => handleDiscardModuleDiscount(discount.id)}
           >
 
           {/* Membership offer, Term, Payment frequency in one row */}

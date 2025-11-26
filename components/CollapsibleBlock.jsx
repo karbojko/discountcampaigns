@@ -5,6 +5,7 @@ import {
   Typography,
   IconButton,
   Collapse,
+  Button,
 } from '@mui/material';
 import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded';
 import DeleteRounded from '@mui/icons-material/DeleteRounded';
@@ -17,6 +18,9 @@ import DeleteRounded from '@mui/icons-material/DeleteRounded';
  * @param {function} onToggle - Callback when expand/collapse is clicked
  * @param {function} onDelete - Callback when delete button is clicked
  * @param {ReactNode} children - The content to show when expanded
+ * @param {boolean} showFooterActions - Whether to show Save/Discard buttons
+ * @param {function} onSave - Callback when Save button is clicked
+ * @param {function} onDiscard - Callback when Discard button is clicked
  */
 export default function CollapsibleBlock({
   title,
@@ -25,6 +29,9 @@ export default function CollapsibleBlock({
   onToggle,
   onDelete,
   children,
+  showFooterActions = false,
+  onSave,
+  onDiscard,
 }) {
   return (
     <Paper
@@ -107,6 +114,43 @@ export default function CollapsibleBlock({
       <Collapse in={expanded} timeout="auto">
         <Box sx={{ p: 3 }}>
           {children}
+          
+          {/* Footer Actions */}
+          {showFooterActions && (
+            <Box 
+              sx={{ 
+                display: 'flex', 
+                justifyContent: 'flex-end', 
+                gap: 1, 
+                mt: 2,
+                pt: 2,
+                borderTop: '1px solid',
+                borderTopColor: 'neutral.200',
+              }}
+            >
+              <Button 
+                variant="text" 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDiscard && onDiscard();
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Discard
+              </Button>
+              <Button 
+                variant="contained" 
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSave && onSave();
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Save
+              </Button>
+            </Box>
+          )}
         </Box>
       </Collapse>
     </Paper>
